@@ -2,6 +2,7 @@
 import random
 from collections import deque
 
+from . import personas
 from .base import BaseGame, pick_option
 from .cards import new_deck, pretty, pretty_list
 from .handeval import best_hand, describe
@@ -34,10 +35,13 @@ class HandState:
         self.revealed = False
         self.hand_name = ""
         self.won = 0
+        self.voluntary = False  # chose to put chips in preflop (blinds don't count)
+        self.folded_to = None   # id of whoever's bet this player gave up to
 
 
 class Holdem(BaseGame):
     game_name = "Texas Hold'em"
+    talk_rule = "keep it under 20 words, empty string to stay quiet; whether it's true is up to you"
 
     def __init__(self, player_specs, options):
         super().__init__(player_specs, options)
@@ -56,6 +60,11 @@ class Holdem(BaseGame):
         self.pots = []             # showdown results for display
         self.past_hands = deque(maxlen=4)
         self.deck = []
+        self.last_raiser = None    # id of the latest bettor or raiser this hand
+        self.hand_talk = {}        # player id -> what they've said this hand
+        self.talk_record = deque(maxlen=6)  # what people said, then what they showed
+        choices = {p.id: spec.get("persona") for p, spec in zip(self.players, player_specs) if not p.is_human}
+        self.minds = {pid: personas.Mind(cid) for pid, cid in personas.deal(choices).items()}
 
     # ------------------------------------------------------------------ helpers
     def blinds(self):
@@ -132,9 +141,14 @@ class Holdem(BaseGame):
         sb_amt, bb_amt = self.blinds()
         self.deck = new_deck()
         self.board, self.history, self.pots = [], [], []
+        self.last_raiser = None
+        with self.lock:
+            self.hand_talk = {}
         for p in self.players:
             h = self.hs[p.id] = HandState()
             h.in_hand = p.chips > 0
+            if h.in_hand and p.id in self.minds:
+                self.minds[p.id].begin_hand()
         self.dealer = self.next_with_chips(self.dealer)
         seated = self.seated()
         n = len(self.players)
@@ -179,6 +193,8 @@ class Holdem(BaseGame):
                 self.sleep(1.5)
         self.to_act = None
         self.settle()
+        self.record_talk()
+        self.update_minds()
         for h in self.hs.values():  # pot has been paid out
             h.contrib = 0
             h.bet = 0
@@ -216,8 +232,11 @@ class Holdem(BaseGame):
             self.changed()
             action, amount = self.get_action(p, ctx)
             self.to_act = None
+            if action in ("call", "raise") and self.street == "preflop":
+                h.voluntary = True
             if action == "fold":
                 h.folded = True
+                h.folded_to = self.last_raiser
                 h.last_action = "Fold"
                 self.record(f"{p.name} folds")
             elif action == "check":
@@ -229,6 +248,7 @@ class Holdem(BaseGame):
                 self.record(f"{p.name} calls {paid}" + (" (all-in)" if h.all_in else ""))
             else:  # raise to `amount`
                 self.put(p, amount - h.bet)
+                self.last_raiser = p.id
                 raise_by = h.bet - self.current_bet
                 verb = ctx["label"] + "s"
                 if raise_by >= min_raise:
@@ -289,6 +309,57 @@ class Holdem(BaseGame):
         )
 
     # ------------------------------------------------------------------ prompts
+    def character_brief(self, player):
+        return self.minds[player.id].brief()
+
+    def say(self, player, text):
+        super().say(player, text)
+        text = (text or "").strip().replace("\n", " ")[:220]
+        if text:
+            with self.lock:
+                self.hand_talk.setdefault(player.id, []).append(text)
+
+    def record_talk(self):
+        """Keep what each player said this hand next to the cards they ended up showing."""
+        with self.lock:
+            talk = {pid: list(said) for pid, said in self.hand_talk.items()}
+        if len(self.contenders()) < 2:
+            return  # nobody had to show, so nobody can be checked
+        for q in self.contenders():
+            if q.id in talk:
+                h = self.hs[q.id]
+                said = " / ".join(f'"{line}"' for line in talk[q.id][-2:])
+                result = "and won" if h.won else "and lost"
+                self.talk_record.append(f"Hand #{self.hand_no}: {self.spoken_name(q)} said {said}, then showed {pretty_list(h.hole)} ({h.hand_name}) {result}.")
+
+    def talk_evidence(self, p):
+        lines = []
+        if self.talk_record:
+            lines.append("\nWhat people said, and what they turned out to hold:")
+            lines += [f"  {entry}" for entry in self.talk_record]
+        with self.lock:
+            speakers = [self.spoken_name(q) for q in self.rivals_of(p) if q.id in self.hand_talk]
+        if speakers:
+            lines.append(f"Still in this hand and said something during it: {', '.join(speakers)}. They knew you'd hear it. It could be honest, an act, or meant to make you assume it's an act.")
+        return lines
+
+    def stack_in_bb(self, p):
+        return (p.chips + self.hs[p.id].bet) / max(1, self.blinds()[1])
+
+    def rivals_of(self, p):
+        return [q for q in self.contenders() if q is not p]
+
+    def state_of_mind(self, p):
+        rivals = self.rivals_of(p)
+        start = max(1, int(self.options.get("starting_chips", 1000)))
+        return self.minds[p.id].read(
+            stack_bb=self.stack_in_bb(p),
+            vs_start=(p.chips + self.hs[p.id].contrib) / start,
+            rivals=[q.id for q in rivals],
+            rival_names={q.id: self.spoken_name(q) for q in rivals},
+            strength=self.equity(p, samples=60, opponents=1) if self.street == "preflop" else None,
+        ) + [self.minds[p.id].talk_impulse()]
+
     def build_prompt(self, p, ctx):
         h = self.hs[p.id]
         sb, bb = self.blinds()
@@ -323,6 +394,9 @@ class Holdem(BaseGame):
             lines += [f"  {s}" for s in self.past_hands]
         lines.append(f"\nYour private notes: {p.notes or '(none yet)'}")
         lines.append(f"Recent table talk:\n{self.recent_chat(8)}")
+        lines += self.talk_evidence(p)
+        lines.append("\nWhere your head is at (private; don't say it out loud):")
+        lines += [f"- {feeling}" for feeling in self.state_of_mind(p)]
         opts = []
         if "fold" in ctx["legal"]:
             opts.append("fold")
@@ -337,9 +411,10 @@ class Holdem(BaseGame):
         return "\n".join(lines)
 
     # ------------------------------------------------------------------ local bot
-    def equity(self, p, samples=120):
+    def equity(self, p, samples=120, opponents=None):
         h = self.hs[p.id]
-        opponents = len(self.contenders()) - 1
+        if opponents is None:
+            opponents = len(self.contenders()) - 1
         if opponents <= 0:
             return 1.0
         known = set(h.hole + self.board)
@@ -358,25 +433,95 @@ class Holdem(BaseGame):
         return wins / samples
 
     def bot_action(self, p, ctx):
-        eq = self.equity(p)
-        pot = self.pot_total()
-        to_call = ctx["to_call"]
-        r = random.random()
+        """Play the seat's character by the numbers: used by local bots and when an AI can't answer."""
+        mind = self.minds[p.id]
+        style = mind.style(self.stack_in_bb(p), [q.id for q in self.rivals_of(p)])
+        if self.street == "preflop":
+            return self.bot_preflop(p, ctx, style)
+        return self.bot_postflop(p, ctx, style, mind)
+
+    def raise_to(self, ctx, size):
+        return "raise", max(ctx["min_to"], min(ctx["max_to"], int(size)))
+
+    def bot_preflop(self, p, ctx, style):
+        strength = self.equity(p, samples=60, opponents=1)
         bb = self.blinds()[1]
-
-        def raise_to(size):
-            return "raise", max(ctx["min_to"], min(ctx["max_to"], int(size)))
-
+        to_call = ctx["to_call"]
+        play, value = personas.hand_cuts(style)
+        if to_call > bb:  # facing a raise: the bigger it is, the better the hand needs to be
+            stack_share = to_call / max(1, p.chips + self.hs[p.id].bet)
+            squeeze = min(0.16, 0.012 * to_call / bb) * (1 - style["sticky"]) + 0.2 * style["fear"] * stack_share
+            play += squeeze
+            value += squeeze + 0.04
+        if "raise" in ctx["legal"] and (strength >= value or random.random() < style["bluff"] * 0.35):
+            return self.raise_to(ctx, max(bb * 2.5, self.current_bet * 2.6) * style["sizing"])
         if to_call == 0:
-            if "raise" in ctx["legal"] and (eq > 0.62 or (eq > 0.45 and r < 0.2) or r < 0.05):
-                return raise_to(self.current_bet + max(bb * 2, pot * 0.6))
             return "check", 0
+        return ("call", 0) if strength >= play else ("fold", 0)
+
+    def bot_postflop(self, p, ctx, style, mind):
+        pot = self.pot_total()
+        bb = self.blinds()[1]
+        to_call = ctx["to_call"]
+        aggression = style["aggression"]
+        felt = self.equity(p) + random.gauss(0, style["noise"]) + 0.06 * mind.confidence
+        can_raise = "raise" in ctx["legal"]
+        trapping = felt > 0.85 and random.random() < style["trap"]
+        if to_call == 0:
+            if can_raise and not trapping and (felt > 0.84 - 0.42 * aggression or random.random() < style["bluff"]):
+                return self.raise_to(ctx, self.current_bet + max(bb, pot * (0.35 + 0.4 * aggression) * style["sizing"]))
+            return "check", 0
+        if can_raise and not trapping and (felt > 0.93 - 0.3 * aggression or random.random() < style["bluff"] * 0.35):
+            return self.raise_to(ctx, self.current_bet * 2.6 + pot * 0.3 * style["sizing"])
         pot_odds = to_call / (pot + to_call)
-        if "raise" in ctx["legal"] and (eq > 0.72 or (eq > 0.55 and r < 0.15)):
-            return raise_to(self.current_bet * 2.5 + pot * 0.3)
-        if eq >= pot_odds + 0.04 or (r < 0.06 and to_call <= bb * 2):
-            return "call", 0
-        return "fold", 0
+        stack_share = to_call / max(1, p.chips + self.hs[p.id].bet)
+        margin = 0.04 - 0.14 * style["sticky"] + 0.22 * style["fear"] * stack_share
+        return ("call", 0) if felt >= pot_odds + margin else ("fold", 0)
+
+    # ------------------------------------------------------------------ state of mind
+    def update_minds(self):
+        """Let each AI seat react to the hand that just finished. Runs before contributions are cleared."""
+        contenders = self.contenders()
+        showdown = len(contenders) > 1
+        bb = self.blinds()[1]
+        top = max(self.seated(), key=lambda q: self.hs[q.id].won)
+        for p in self.seated():
+            mind = self.minds.get(p.id)
+            if not mind:
+                continue
+            h = self.hs[p.id]
+            net = h.won - h.contrib
+            before = max(1, p.chips - net)
+            weight = min(1.5, abs(net) / max(before, bb * 10) / 0.25)  # 1.0 = a quarter of their stack
+            event = self.hand_event(p, h, net, weight, contenders, showdown, bb)
+            if event:
+                rival = self.players[h.folded_to] if h.folded and h.folded_to is not None else top
+                mind.absorb(event, rival.id if rival is not p else None, self.spoken_name(rival), min(1.0, weight) if event == "pot_won" else max(0.5, weight))
+            mind.end_hand(h.voluntary)
+
+    def hand_event(self, p, h, net, weight, contenders, showdown, bb):
+        made = best_hand(h.hole + self.board)[0] if len(self.board) >= 3 else None
+        if h.folded:
+            bettor = None if h.folded_to is None else self.players[h.folded_to]
+            if showdown and bettor in contenders and len(self.board) == 5 and h.contrib >= bb \
+                    and made > best_hand(self.hs[bettor.id].hole + self.board)[0]:
+                return "shown_up"
+            if weight >= 1:
+                return "big_loss"
+            if not showdown and bettor in contenders and h.contrib >= bb * 3:
+                return "pushed_off"
+            return None
+        if net < 0 and showdown:
+            if made[0] >= 2 and weight >= 0.5:  # two pair or better, in a pot that mattered
+                return "bad_beat"
+            if self.last_raiser == p.id and made[0] == 0:
+                return "caught_bluffing"
+            return "big_loss" if weight >= 1 else None
+        if net > 0:
+            if not showdown and self.last_raiser == p.id and made is not None and made[0] == 0:
+                return "bluff_worked"
+            return "big_win" if weight >= 1 else "pot_won"
+        return None
 
     # ------------------------------------------------------------------ showdown
     def settle(self):

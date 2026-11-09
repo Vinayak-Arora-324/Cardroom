@@ -37,6 +37,7 @@ const api = {
 let settings = {};
 let clis = {};
 let catalog = {};
+let personas = [];
 let seats = [];
 let state = null;
 let polling = false;
@@ -56,6 +57,7 @@ function defaultSeat(kind, i) {
     model: kind === "claude" ? settings.claude_default_model || "sonnet" : kind === "codex" ? settings.codex_default_model || "" : kind === "openrouter" ? settings.openrouter_default_model || "" : "",
     effort: kind === "claude" || kind === "codex" ? "low" : "",
     personality: kind === "human" || kind === "bot" ? "" : PERSONALITIES[i % PERSONALITIES.length],
+    persona: "random",
   };
 }
 
@@ -104,6 +106,17 @@ function effortChoices(s) {
   return ["", ...(cat.models.find((m) => m.id === s.model)?.efforts || cat.efforts)];
 }
 
+function personalityField(s) {
+  if (selectedGame() !== "holdem") {
+    const off = s.kind === "human" || s.kind === "bot";
+    return `<input data-k="personality" value="${esc(s.personality)}" placeholder="${off ? "" : "Personality / play style"}" ${off ? "disabled" : ""}>`;
+  }
+  if (s.kind === "human") return '<select data-k="persona" disabled><option>—</option></select>';
+  const chosen = s.persona || "random";
+  const option = (id, label) => `<option value="${esc(id)}" ${id === chosen ? "selected" : ""}>${esc(label)}</option>`;
+  return `<select data-k="persona" title="Personality">${option("random", "Random")}${personas.map((p) => option(p.id, p.label)).join("")}</select>`;
+}
+
 function renderSeats() {
   const box = $("#seats");
   box.innerHTML = "";
@@ -122,10 +135,10 @@ function renderSeats() {
       <select data-k="effort" ${s.kind === "human" || s.kind === "bot" ? "disabled" : ""} title="Reasoning effort (lower = faster, cheaper)">
         ${efforts.map((e) => `<option value="${e}" ${e === s.effort ? "selected" : ""}>${e || "effort: default"}</option>`).join("")}
       </select>
-      <input data-k="personality" value="${esc(s.personality)}" placeholder="${s.kind === "human" || s.kind === "bot" ? "" : "Personality / play style"}" ${s.kind === "human" || s.kind === "bot" ? "disabled" : ""}>
-      <div style="display:flex;gap:4px">
+      ${personalityField(s)}
+      <div class="seat-actions">
         <button class="btn small" data-act="test" ${s.kind === "human" ? "disabled" : ""}>Test</button>
-        <button class="btn small ${bridge ? "hidden" : ""}" data-act="remove" title="Remove seat">&times;</button>
+        <button class="btn small ghost ${bridge ? "hidden" : ""}" data-act="remove" title="Remove seat">&times;</button>
       </div>
       <div class="test-result"></div>`;
     row.querySelectorAll("[data-k]").forEach((el) => {
@@ -259,6 +272,7 @@ async function loadSettings() {
   settings = r.settings;
   clis = r.clis;
   catalog = r.catalog;
+  personas = r.personas || [];
   renderBackendStatus();
 }
 
@@ -327,6 +341,9 @@ async function loadOpenRouterModels() {
 // ======================================================================
 // Update `target` to match `html`, touching only what differs. Elements that stay
 // keep their running animations and transitions; only new ones animate in.
+const DEALT = ".card:not(.ghost)";
+let dealt = [];  // cards the last render put on the table, in the order they were dealt
+
 function morph(target, html) {
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
@@ -349,6 +366,10 @@ function morphChildren(parent, next) {
     if (node === cursor) cursor = cursor.nextSibling;
     else parent.insertBefore(node, cursor);
     if (old) morphNode(old, want);
+    else if (want.nodeType === Node.ELEMENT_NODE) {
+      if (want.matches(DEALT)) dealt.push(want);
+      dealt.push(...want.querySelectorAll(DEALT));
+    }
   }
 }
 
@@ -365,10 +386,55 @@ function morphNode(old, want) {
 function cardHTML(c) {
   if (!c) return '<div class="card ghost"></div>';
   if (c === "??") return '<div class="card back"></div>';
-  const suit = { s: "♠", h: "♥", d: "♦", c: "♣" }[c[1]];
   const rank = c[0] === "T" ? "10" : c[0];
-  return `<div class="card ${c[1] === "h" || c[1] === "d" ? "red" : ""}" data-key="${c}"><span class="r">${rank}</span><span class="s">${suit}</span></div>`;
+  return `<div class="card ${c[1] === "h" || c[1] === "d" ? "red" : ""} suit-${c[1]}" data-key="${c}"><span class="r">${rank}</span><span class="p"></span><span class="s"></span></div>`;
 }
+
+// ---------------------------------------------------------------------- chips
+const CHIP_VALUES = [100000, 25000, 5000, 1000, 500, 100, 25, 5, 1];
+
+// Split an amount into chips, biggest first. That gives the fewest chips; `spread` then
+// breaks big chips into change while the total stays within that many, so a player's
+// stack looks like a stack instead of one lonely chip.
+function chipCounts(amount, spread = 0) {
+  amount = Math.max(0, Math.round(amount));
+  const counts = CHIP_VALUES.map((v) => {
+    const n = Math.floor(amount / v);
+    amount -= n * v;
+    return n;
+  });
+  let total = counts.reduce((a, b) => a + b, 0);
+  for (let broke = true; broke;) {
+    broke = false;
+    for (let i = 0; i < CHIP_VALUES.length - 1; i++) {
+      const extra = CHIP_VALUES[i] / CHIP_VALUES[i + 1] - 1;
+      if (counts[i] && total + extra <= spread) {
+        counts[i]--;
+        counts[i + 1] += extra + 1;
+        total += extra;
+        broke = true;
+      }
+    }
+  }
+  return counts;
+}
+
+// Stacks of chips for an amount, one column per denomination. The drawing is capped at
+// `cols` columns of 8 chips: the number beside it is exact, the chips are the picture.
+function chipsHTML(amount, { spread = 0, cols = 4, cls = "" } = {}) {
+  const stacks = chipCounts(amount, spread).map((n, i) => [CHIP_VALUES[i], n]).filter(([, n]) => n);
+  const html = stacks.slice(0, cols).map(([v, n]) =>
+    `<span class="chip-col" data-key="${v}">${`<i class="chip c${v}"></i>`.repeat(Math.min(n, 8))}</span>`).join("");
+  return `<span class="chips-viz ${cls}" title="${stacks.map(([v, n]) => `${n} × ${v}`).join(" · ")}">${html}</span>`;
+}
+
+// A single small chip in the colour of the biggest denomination that fits the amount.
+function chipIcon(amount) {
+  return `<i class="chip mini c${CHIP_VALUES.find((v) => v <= amount) || 1}"></i>`;
+}
+
+// Where a seat's bet sits on the felt (percent of the table), part-way to the centre.
+const betPos = ({ x, y }) => ({ x: 50 + (x - 50) * 0.62, y: 50 + (y - 50) * 0.55 });
 
 function thinkingHTML(p) {
   if (!p.thinking) {
@@ -425,10 +491,13 @@ function renderCenter(isPoker) {
   const c = $("#center");
   if (isPoker) {
     const board = [0, 1, 2, 3, 4].map((i) => cardHTML(state.board[i])).join("");
+    // The pile is what has been pushed in; this round's bets still sit in front of the seats.
+    const inFront = Object.values(state.seats).reduce((sum, seat) => sum + seat.bet, 0);
     const pots = (state.pots || []).map((p) => `${esc(p.name)} ${p.amount} → ${p.winners.map((id) => esc(state.players[id].name)).join(" & ")}`).join(" · ");
     morph(c, `
       <div class="label">${esc(state.street || "")}</div>
       <div class="board">${board}</div>
+      <div class="pot-pile">${chipsHTML(state.pot - inFront, { cols: 6 })}</div>
       <div class="pot">Pot ${state.pot}${pots ? ` <small>${pots}</small>` : ""}</div>
       <div class="label">${state.human_hand ? `You have: ${esc(state.human_hand)}` : ""}</div>`);
   } else {
@@ -442,6 +511,8 @@ function renderCenter(isPoker) {
   }
 }
 
+const SEAT_HALF = 67;  // px: half the height of a seat holding one two-card hand
+
 function renderSeatsLayer(isPoker) {
   const layer = $("#seats-layer");
   const players = state.players;
@@ -453,7 +524,7 @@ function renderSeatsLayer(isPoker) {
   players.forEach((p, i) => {
     const seat = state.seats[p.id] || {};
     const { x, y } = pos[i];
-    const classes = ["seat"];
+    const classes = ["seat", "pinned"];
     if (isPoker) {
       if (state.to_act === p.id) classes.push("turn");
       if (seat.folded) classes.push("folded");
@@ -471,31 +542,38 @@ function renderSeatsLayer(isPoker) {
       if (state.sb_id === p.id) tags += '<span class="blind-tag">SB</span>';
       if (state.bb_id === p.id) tags += '<span class="blind-tag">BB</span>';
     }
+    // The seat's own chips sit beside its cards; the exact count is the number above them.
+    const stack = chipsHTML(p.chips, { spread: 10, cols: 3, cls: "stack" });
     let body = "";
     if (isPoker) {
       const mucked = seat.folded && p.kind !== "human";
       const cards = seat.cards?.length && !mucked ? seat.cards.map(cardHTML).join("") : "";
-      body = `<div class="cards">${cards}</div>
+      body = `<div class="cards">${cards}${stack}</div>
         <div class="meta"><span class="action">${esc(seat.last_action || "")}</span>
         <span class="hand-name">${esc(seat.hand_name || "")}${seat.won ? ` +${seat.won}` : ""}</span></div>`;
     } else {
       const hands = (seat.hands || []).map((h, hi) => `
         <div class="bj-hand ${seat.active_hand === hi && (seat.hands.length > 1 || p.kind === "human") ? "active" : ""}">
           <div class="cards">${h.cards.map(cardHTML).join("")}</div>
-          <div class="info"><span>${esc(h.value)}</span><span>bet ${h.bet}${h.doubled ? " ×2" : ""}</span>
+          <div class="info"><span>${esc(h.value)}</span><span class="bet">${chipIcon(h.bet)}${h.bet}${h.doubled ? " ×2" : ""}</span>
           ${h.result ? `<span class="res ${h.result}">${h.result}${h.payout ? ` ${h.payout > 0 ? "+" : ""}${h.payout}` : ""}</span>` : ""}</div>
         </div>`).join("");
-      body = `<div class="bj-hands">${hands}</div>`;
+      body = `<div class="bj-hands">${hands}${stack}</div>`;
     }
+    // Pinned by its outer edge, so a seat that gets taller (a split, a long hand) grows
+    // toward the middle of the table and not off the screen.
+    const edge = y < 50 ? `top:calc(${y}% - ${SEAT_HALF}px)` : `bottom:calc(${100 - y}% - ${SEAT_HALF}px)`;
     html += `
-      <div class="${classes.join(" ")}" style="left:${x}%;top:${y}%" data-key="seat-${p.id}">
+      <div class="${classes.join(" ")}" style="left:${x}%;${edge}" data-key="seat-${p.id}">
         <div class="head"><span class="badge ${p.kind}">${BADGE[p.kind]}</span><span class="name">${esc(p.name)}</span>${tags}</div>
         <div class="row-between"><span class="model">${modelLabel(p)}</span>${thinkingHTML(p)}<span class="chips">${p.chips}</span></div>
         ${body}
       </div>`;
-    if (isPoker && seat.bet > 0) {
-      const bx = 50 + (x - 50) * 0.62, by = 50 + (y - 50) * 0.55;
-      betChips += `<div class="bet-chip" style="left:${bx}%;top:${by}%" data-key="bet-${p.id}">${seat.bet}</div>`;
+    // Poker: this round's bet. Blackjack: everything the seat still has riding on the dealer.
+    const staked = isPoker ? seat.bet : (seat.hands || []).reduce((sum, h) => sum + (h.result ? 0 : h.bet), 0);
+    if (staked > 0) {
+      const at = betPos(pos[i]);
+      betChips += `<div class="bet-spot" style="left:${at.x}%;top:${at.y}%" data-key="bet-${p.id}">${chipsHTML(staked, { cols: 3 })}<span class="amt">${staked}</span></div>`;
     }
   });
   morph(layer, html + betChips);
@@ -650,7 +728,153 @@ function renderBridgePanel(humanIndex) {
   panel.querySelectorAll("[data-call]").forEach((b) => { if (!b.disabled) b.onclick = () => act({ call: b.dataset.call }); });
 }
 
+// ---------------------------------------------------------------------- sound & motion
+// Deal the cards the last render added, one after another, each with its own sound.
+function dealCards(cards, audible) {
+  const gap = cards.length > 6 ? 65 : 90;  // ms; a full deal goes round faster than a single hit
+  cards.forEach((el, i) => el.animate(
+    [{ transform: "translateY(-14px) rotate(-4deg)", opacity: 0 }, { transform: "none", opacity: 1 }],
+    { duration: 250, delay: i * gap, easing: "ease-out", fill: "backwards" }));
+  if (audible && cards.length) Sound.cards(Math.min(cards.length, 16), gap / 1000);
+}
+
+// The middle of an element on screen, or null if it isn't showing.
+function pointOf(selector) {
+  const r = document.querySelector(selector)?.getBoundingClientRect();
+  if (!r || !r.height) return null;
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+const stackPoint = (pid) => pointOf(`[data-key="seat-${pid}"] .stack`);
+
+// Slide a few chips across the table. `from` and `to` are screen points, `delay` is in seconds.
+function flyChips(from, to, amount, delay = 0) {
+  if (!from || !to || document.hidden) return;
+  const counts = chipCounts(amount);
+  const chips = CHIP_VALUES.flatMap((v, i) => Array(Math.min(counts[i], 3)).fill(v)).slice(0, 6);
+  chips.forEach((v, k) => {
+    const el = document.createElement("i");
+    el.className = `chip c${v} fly`;
+    el.style.left = `${from.x}px`;
+    el.style.top = `${from.y}px`;
+    document.body.appendChild(el);
+    const dx = to.x - from.x + (Math.random() - 0.5) * 14, dy = to.y - from.y + (Math.random() - 0.5) * 8;
+    el.animate([
+      { transform: "translate(-50%, -50%)", opacity: 0 },
+      { opacity: 1, offset: 0.15 },
+      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`, opacity: 1 },
+    ], { duration: 420, delay: delay * 1000 + k * 50, easing: "cubic-bezier(.25,.8,.35,1)", fill: "both" })
+      .onfinish = () => el.remove();
+  });
+}
+
+// Compare two snapshots of the table and play what happened in between: chips bet, won
+// and lost, checks and folds. (Cards make their own sound as they are dealt.)
+function tableEvents(prev, cur) {
+  if (!prev || prev.game !== cur.game) return;
+  if (cur.game === "Contract Bridge") {
+    if (cur.hand_no !== prev.hand_no) Sound.cards(13, 0.05);  // a new board is dealt
+    return;
+  }
+  const isPoker = cur.game === "Texas Hold'em";
+  const sameHand = prev.hand_no === cur.hand_no;
+  const centre = pointOf(isPoker ? "#center .pot-pile" : "#center .dealer-area .label");
+  const layer = $("#seats-layer").getBoundingClientRect();
+  const humanIndex = cur.players.findIndex((p) => p.kind === "human");
+  const pos = seatPositions(cur.players.length, humanIndex);
+  const betPoint = (i) => {
+    const at = betPos(pos[i]);
+    return { x: layer.left + (layer.width * at.x) / 100, y: layer.top + (layer.height * at.y) / 100 };
+  };
+  const size = (amount) => Math.min(4, Math.floor(Math.log10(Math.max(1, amount))));
+
+  // Your own chips are heard one by one at full volume. Everyone else's are quieter, and
+  // however many seats move chips at once, the table makes each kind of sound only once.
+  let wait = 0;
+  const others = {};
+  const cue = (kind, amount, mine) => {
+    if (!mine) {
+      others[kind] = Math.max(others[kind] || 0, amount);
+      return;
+    }
+    if (kind === "lose") Sound.chipsLose(1, wait);
+    else Sound[kind === "win" ? "chipsWin" : "chipsBet"](size(amount), 1, wait);
+    wait += 0.15;
+  };
+
+  if (isPoker && sameHand) {
+    // End of a betting round: the bets in front of the seats are pushed into the pot.
+    let pushed = false;
+    prev.players.forEach((p, i) => {
+      const bet = prev.seats[p.id]?.bet;
+      if (!bet || cur.seats[p.id]?.bet) return;
+      flyChips(betPoint(i), centre, bet);
+      pushed = true;
+    });
+    if (pushed) {
+      Sound.chipsSlide(0.8);
+      wait = 0.35;
+    }
+  }
+
+  cur.players.forEach((p, i) => {
+    const was = prev.players[i];
+    if (!was) return;
+    const mine = p.kind === "human";
+    const delta = p.chips - was.chips;
+    const seat = cur.seats[p.id] || {};
+    const before = (sameHand && prev.seats[p.id]) || {};
+    const stack = stackPoint(p.id);
+    if (delta < 0) {
+      cue("bet", -delta, mine);
+      flyChips(stack, betPoint(i), -delta);
+    }
+    if (isPoker) {
+      if (delta > 0) {
+        cue("win", delta, mine);
+        flyChips(centre, stack, delta, wait);
+      }
+      if (seat.folded && !before.folded) Sound.fold(mine ? 1 : 0.6);
+      if (seat.last_action === "Check" && before.last_action !== "Check") Sound.knock(mine ? 1 : 0.6);
+      return;
+    }
+    // Blackjack: hands that have just been settled against the dealer.
+    const settled = (seat.hands || []).filter((h, k) => h.result && !before.hands?.[k]?.result);
+    const staked = settled.reduce((sum, h) => sum + h.bet, 0);
+    const net = settled.reduce((sum, h) => sum + h.payout, 0);
+    if (net > 0) {
+      cue("win", net, mine);
+      flyChips(betPoint(i), stack, staked);
+      flyChips(centre, stack, net, 0.15);
+    } else if (net < 0) {
+      cue("lose", -net, mine);
+      flyChips(betPoint(i), centre, -net);
+    } else if (settled.length) {  // a push: the bet comes back
+      cue("bet", staked, mine);
+      flyChips(betPoint(i), stack, staked);
+    } else if (delta > 0) {  // a rebuy
+      cue("win", delta, mine);
+      flyChips(centre, stack, delta);
+    }
+  });
+
+  for (const kind of ["bet", "lose", "win"]) {
+    if (!others[kind]) continue;
+    if (kind === "lose") Sound.chipsLose(0.55, wait);
+    else Sound[kind === "win" ? "chipsWin" : "chipsBet"](size(others[kind]), 0.55, wait);
+    wait += 0.15;
+  }
+}
+
+function renderSoundToggle() {
+  $("#sound-toggle").textContent = Sound.muted ? "Sound off" : "Sound on";
+}
+
 // ---------------------------------------------------------------------- actions
+// The chips for the amount being typed or dragged in the bet box.
+function showBetChips(amount) {
+  morph($("#bet-chips"), chipsHTML(amount, { cols: 4 }));
+}
+
 function renderActionPanel(isPoker) {
   const panel = $("#action-panel");
   panel.classList.remove("bridge", "auction");
@@ -681,6 +905,7 @@ function renderActionPanel(isPoker) {
         <div class="raise-box">
           <input type="range" id="raise-range" min="${req.min_to}" max="${req.max_to}" step="1" value="${mid}">
           <input type="number" id="raise-amt" min="${req.min_to}" max="${req.max_to}" value="${mid}">
+          <span class="bet-chips" id="bet-chips"></span>
           <button class="btn small" data-quick="min">Min</button>
           <button class="btn small" data-quick="half">½ pot</button>
           <button class="btn small" data-quick="pot">Pot</button>
@@ -690,8 +915,9 @@ function renderActionPanel(isPoker) {
       ${err}`;
     const range = $("#raise-range"), amt = $("#raise-amt");
     if (range) {
-      range.oninput = () => (amt.value = range.value);
-      amt.oninput = () => (range.value = amt.value);
+      range.oninput = () => showBetChips((amt.value = range.value));
+      amt.oninput = () => showBetChips((range.value = amt.value));
+      showBetChips(mid);
       panel.querySelectorAll("[data-quick]").forEach((b) => (b.onclick = () => {
         const q = b.dataset.quick;
         const potAfterCall = req.pot + req.to_call;
@@ -699,6 +925,8 @@ function renderActionPanel(isPoker) {
           : q === "pot" ? req.current_bet + potAfterCall : Math.round(req.current_bet + potAfterCall / 2);
         v = Math.max(req.min_to, Math.min(req.max_to, v));
         amt.value = range.value = v;
+        showBetChips(v);
+        Sound.chip();
       }));
     }
     panel.querySelectorAll("[data-a]").forEach((b) => (b.onclick = () => act({ action: b.dataset.a, amount: amt ? +amt.value : 0 })));
@@ -709,13 +937,18 @@ function renderActionPanel(isPoker) {
       <div class="raise-box">
         <input type="range" id="bet-range" min="${req.min}" max="${req.max}" value="${last}">
         <input type="number" id="bet-amt" min="${req.min}" max="${req.max}" value="${last}">
+        <span class="bet-chips" id="bet-chips"></span>
         ${[req.min, 25, 50, 100, req.max].filter((v, i, a) => v >= req.min && v <= req.max && a.indexOf(v) === i).map((v) => `<button class="btn small" data-chip="${v}">${v === req.max ? "Max" : v}</button>`).join("")}
       </div>
       <button class="btn primary" id="place-bet">Deal<span class="kbd">Enter</span></button>${err}`;
     const range = $("#bet-range"), amt = $("#bet-amt");
-    range.oninput = () => (amt.value = range.value);
-    amt.oninput = () => (range.value = amt.value);
-    panel.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => (amt.value = range.value = b.dataset.chip)));
+    range.oninput = () => showBetChips((amt.value = range.value));
+    amt.oninput = () => showBetChips((range.value = amt.value));
+    showBetChips(last);
+    panel.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => {
+      showBetChips((amt.value = range.value = b.dataset.chip));
+      Sound.chip();
+    }));
     $("#place-bet").onclick = () => { localStorage.setItem("aitable.lastbet", amt.value); act({ amount: +amt.value }); };
   } else if (req.type === "bj_play") {
     const keys = { hit: "H", stand: "S", double: "D", split: "P" };
@@ -769,9 +1002,12 @@ async function poll() {
     try {
       const s = await api.get(`/api/state?v=${v}`);
       if (!s.game) { showLobby(); break; }
+      const prev = state;
       state = s;
       v = s.version;
       render();
+      dealCards(dealt.splice(0), !!prev);
+      tableEvents(prev, s);
     } catch (_) {
       $("#status-line").textContent = "Lost connection to the server — is server.py still running?";
       await new Promise((r) => setTimeout(r, 1500));
@@ -825,6 +1061,12 @@ async function init() {
     $("#settings-dialog").close();
   };
   $("#back-lobby").onclick = showLobby;
+  renderSoundToggle();
+  $("#sound-toggle").onclick = () => {
+    Sound.setMuted(!Sound.muted);
+    renderSoundToggle();
+    Sound.chip();
+  };
   $("#stop-game").onclick = async () => { if (confirm("Stop this game?")) await api.post("/api/game/stop"); };
   $("#chat-form").onsubmit = async (e) => {
     e.preventDefault();

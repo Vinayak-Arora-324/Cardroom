@@ -1,0 +1,282 @@
+/* ======================================================================
+   Sidebar (chat, log, agents) and the action rail in front of the player.
+   Ledger-like: hairlines and type, no boxes. Tokens only.
+   ====================================================================== */
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  background: var(--ink-2);
+  border-left: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tabs {
+  display: flex;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.tab {
+  flex: 1;
+  margin-bottom: -1px;               /* the active marker sits on the tabs hairline */
+  padding: 16px 10px 14px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color .15s var(--ease), border-color .15s var(--ease);
+}
+.tab:hover { color: var(--parchment); }
+.tab.active { color: var(--ivory); border-bottom-color: var(--brass); }
+
+.tab-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 14px 18px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+
+/* chat & log */
+.log div {
+  padding: 3px 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--parchment);
+  border: 0;
+}
+.log .hand {
+  margin: 18px 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ivory);
+}
+.log .hand:first-child { margin-top: 0; }
+.log .win { color: var(--win); }
+.log .warn { color: var(--brass-hi); }
+.log .error { color: var(--red); font-size: 12px; }
+.log .chat {
+  padding: 4px 0;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-style: italic;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--ivory);
+}
+
+/* agents */
+.stats table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.stats th {
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--dim);
+}
+.stats td {
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  color: var(--parchment);
+  vertical-align: top;
+}
+.stats td:first-child { color: var(--ivory); }
+.stats td small { font-size: 11px; color: var(--dim); }
+.stats .err { color: var(--red); font-size: 11px; line-height: 1.4; }
+.stats .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.stats .badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bot);
+  flex: none;
+}
+.stats .badge.claude::before { background: var(--claude); }
+.stats .badge.codex::before { background: var(--codex); }
+.stats .badge.openrouter::before { background: var(--openrouter); }
+.stats .badge.bot::before { background: var(--bot); }
+.stats .badge.human::before { background: var(--human); }
+.stats .hint {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+/* chat input */
+.chat-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--rule);
+}
+.chat-form input { flex: 1; min-width: 0; }
+
+/* ---------- action panel ---------- */
+.action-panel {
+  background: var(--ink-2);
+  border-top: 1px solid var(--rule-strong);
+  padding: 14px 24px;
+  min-height: 66px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.action-panel .prompt {
+  margin-right: 12px;
+  font-family: var(--serif);
+  font-size: 19px;
+  font-style: italic;
+  font-weight: 500;
+  color: var(--ivory);
+}
+/* placement only; .btn itself is styled elsewhere. Small quick-amount buttons stay compact. */
+.action-panel .btn:not(.small) { min-width: 104px; }
+
+.action-panel .raise-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 0 16px;
+  border-left: 1px solid var(--rule);
+}
+.action-panel .raise-box input[type=number] { width: 84px; }
+
+.action-panel input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 200px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.action-panel input[type=range]:focus { outline: none; }
+.action-panel input[type=range]::-webkit-slider-runnable-track { height: 1px; background: var(--rule-strong); }
+.action-panel input[type=range]::-moz-range-track { height: 1px; background: var(--rule-strong); border: 0; }
+.action-panel input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--brass);
+  border: 0;
+}
+.action-panel input[type=range]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--brass);
+  border: 0;
+}
+.action-panel input[type=range]:focus-visible::-webkit-slider-thumb { background: var(--brass-hi); }
+.action-panel input[type=range]:focus-visible::-moz-range-thumb { background: var(--brass-hi); }
+
+.kbd {
+  margin-left: 7px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: inherit;
+  opacity: .55;
+  border: 0;
+  background: none;
+}
+
+.action-panel .err {
+  width: 100%;
+  text-align: center;
+  font-size: 13px;
+  color: var(--red);
+}
+
+/* bridge: hand and bidding box */
+.action-panel.bridge { align-items: stretch; justify-content: center; gap: 28px; }
+.action-panel.auction { min-height: 158px; }
+
+.bridge-hand { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.bridge-hand .label {
+  width: 100%;
+  margin-bottom: 4px;
+  font-family: var(--sans);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--parchment);
+}
+
+.card-btn {
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: transform .12s var(--ease);
+}
+.card-btn:not(:disabled):hover { transform: translateY(-6px); }
+.card-btn:disabled { cursor: default; }
+.card-btn:focus-visible { outline: 1px solid var(--brass); outline-offset: 3px; border-radius: 4px; }
+.card-btn.dim:disabled .card { filter: brightness(.6) saturate(.7); }
+
+.bid-box { display: flex; gap: 14px; align-items: flex-start; }
+.bid-grid { display: grid; grid-template-columns: repeat(7, 42px); gap: 2px; }
+.bid-btn {
+  height: 26px;
+  padding: 0;
+  background: var(--ink-3);
+  color: var(--ivory);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: lining-nums tabular-nums;
+  cursor: pointer;
+  transition: border-color .15s var(--ease), background-color .15s var(--ease);
+}
+.bid-btn.h, .bid-btn.d { color: var(--red); }
+.bid-btn:not(:disabled):hover { border-color: var(--brass); background: var(--ink); }
+.bid-btn:disabled { opacity: .22; cursor: default; }
+.bid-btn:focus-visible { outline: 1px solid var(--brass); outline-offset: 2px; }
+
+.bid-side { display: flex; flex-direction: column; gap: 4px; }
+.bid-side .btn { min-width: 96px; }

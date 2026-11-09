@@ -21,4 +21,6 @@ A Python engine owns the deck and the rules. The AIs only choose moves and see o
 
 Each seat gets its own model and effort level. **Test** checks a seat before you play.
 
+In Hold'em, each AI or bot seat can also be given a personality, or left on **Random** to keep it secret. Personalities vary from seat to seat and shift with how the night is going.
+
 > Cardroom listens on `127.0.0.1` only. Don't expose it to a network: it runs CLIs logged in to your accounts.

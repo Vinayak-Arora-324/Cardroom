@@ -63,6 +63,7 @@ class Player:
 
 class BaseGame:
     game_name = "base"
+    talk_rule = "keep it under 20 words, empty string to stay quiet; never reveal your hole cards honestly unless bluffing is your thing"
 
     def __init__(self, player_specs, options):
         self.options = options
@@ -116,7 +117,11 @@ class BaseGame:
 
     def recent_chat(self, n=10):
         lines = list(self.chat)[-n:]
-        return "\n".join(f'{c["name"]}: "{c["text"]}"' for c in lines) or "(quiet table)"
+        return "\n".join(f'{self.spoken_name(self.players[c["pid"]])}: "{c["text"]}"' for c in lines) or "(quiet table)"
+
+    def spoken_name(self, player):
+        """How AI prompts refer to a player, so a human seat called "You" isn't read as the AI itself."""
+        return "the human player" if player.is_human and player.name == "You" else player.name
 
     def check_stopped(self):
         if self.stopped:
@@ -219,14 +224,18 @@ class BaseGame:
             self.say(human, text)
 
     # ---- AI decisions ---------------------------------------------------------
-    def system_prompt(self, player, game_rules):
+    def character_brief(self, player):
+        """The part of the system prompt that says who this seat is and what it's playing for."""
         persona = player.personality or "You are a sharp, sociable card player with a dry sense of humour."
+        return f"Play to win chips.\nPersonality: {persona}"
+
+    def system_prompt(self, player, game_rules):
         return (
             f"You are \"{player.name}\", an AI player at a casual {self.game_name} table on someone's laptop. "
             f"The other players are a human and other AI agents (Claude Code, Codex, other models). "
-            f"Play to win chips.\nPersonality: {persona}\n\n{game_rules}\n\n"
+            f"{self.character_brief(player)}\n\n{game_rules}\n\n"
             "Respond with ONE JSON object only, matching the requested schema. "
-            "\"table_talk\" is optional banter everyone hears (keep it under 20 words, empty string to stay quiet; never reveal your hole cards honestly unless bluffing is your thing). "
+            f"\"table_talk\" is optional banter everyone hears ({self.talk_rule}). "
             "\"notes\" is your private memory for future hands (max 300 chars: opponent tendencies, reads, plans); it replaces your previous notes."
         )
 
