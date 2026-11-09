@@ -4,7 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Card Table</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/lobby.css">
+  <link rel="stylesheet" href="/css/table.css">
+  <link rel="stylesheet" href="/css/cards.css">
+  <link rel="stylesheet" href="/css/panel.css">
 </head>
 <body>
   <!-- ======================= LOBBY ======================= -->
@@ -17,63 +22,63 @@
 
     <div class="lobby-body">
       <div class="panel">
-        <h2>1 · Pick a game</h2>
+        <h2>The game</h2>
         <div class="game-picker">
           <label class="game-option">
             <input type="radio" name="game" value="holdem" checked>
-            <div class="game-card"><div class="big">♠♥</div><b>Texas Hold'em</b><span>No-limit tournament. Last stack standing wins.</span></div>
+            <div class="game-card"><b>Texas Hold'em</b><span>No-limit tournament. Last stack standing wins.</span><i class="game-mark"></i></div>
           </label>
           <label class="game-option">
             <input type="radio" name="game" value="blackjack">
-            <div class="game-card"><div class="big">21</div><b>Blackjack</b><span>Everyone vs the dealer. AI seats play in parallel.</span></div>
+            <div class="game-card"><b>Blackjack</b><span>Everyone vs the dealer. AI seats play in parallel.</span><i class="game-mark"></i></div>
           </label>
           <label class="game-option">
             <input type="radio" name="game" value="bridge">
-            <div class="game-card"><div class="big">4&spades;</div><b>Bridge</b><span>Two partnerships, four seats, duplicate scoring.</span></div>
+            <div class="game-card"><b>Bridge</b><span>Two partnerships, four seats, duplicate scoring.</span><i class="game-mark"></i></div>
           </label>
         </div>
 
-        <h2>Game options</h2>
+        <h2>House rules</h2>
         <div class="options-grid" id="options-holdem">
-          <label>Starting chips <input type="number" id="opt-chips" value="1000" min="100" step="100"></label>
-          <label>Small blind <input type="number" id="opt-sb" value="10" min="1"></label>
-          <label>Big blind <input type="number" id="opt-bb" value="20" min="2"></label>
-          <label>Double blinds every <input type="number" id="opt-blind-every" value="10" min="0"> hands <small>(0 = never)</small></label>
-          <label>Pause between hands <input type="number" id="opt-pause" value="5" min="0" max="30"> s</label>
+          <label>Starting chips <span class="field"><input type="number" id="opt-chips" value="1000" min="100" step="100"></span></label>
+          <label>Small blind <span class="field"><input type="number" id="opt-sb" value="10" min="1"></span></label>
+          <label>Big blind <span class="field"><input type="number" id="opt-bb" value="20" min="2"></span></label>
+          <label>Double blinds every <span class="field"><input type="number" id="opt-blind-every" value="10" min="0"> <small>hands</small> <small>(0 = never)</small></span></label>
+          <label>Pause between hands <span class="field"><input type="number" id="opt-pause" value="5" min="0" max="30"> <small>s</small></span></label>
         </div>
         <div class="options-grid hidden" id="options-blackjack">
-          <label>Starting chips <input type="number" id="opt-bj-chips" value="1000" min="100" step="100"></label>
-          <label>Min bet <input type="number" id="opt-min-bet" value="10" min="1"></label>
-          <label>Max bet <input type="number" id="opt-max-bet" value="500" min="1"></label>
-          <label>Decks in shoe <input type="number" id="opt-decks" value="6" min="1" max="8"></label>
-          <label><input type="checkbox" id="opt-h17"> Dealer hits soft 17</label>
-          <label>Pause between rounds <input type="number" id="opt-bj-pause" value="4" min="0" max="30"> s</label>
+          <label>Starting chips <span class="field"><input type="number" id="opt-bj-chips" value="1000" min="100" step="100"></span></label>
+          <label>Min bet <span class="field"><input type="number" id="opt-min-bet" value="10" min="1"></span></label>
+          <label>Max bet <span class="field"><input type="number" id="opt-max-bet" value="500" min="1"></span></label>
+          <label>Decks in shoe <span class="field"><input type="number" id="opt-decks" value="6" min="1" max="8"></span></label>
+          <label class="check"><input type="checkbox" id="opt-h17"> Dealer hits soft 17</label>
+          <label>Pause between rounds <span class="field"><input type="number" id="opt-bj-pause" value="4" min="0" max="30"> <small>s</small></span></label>
         </div>
         <div class="options-grid hidden" id="options-bridge">
-          <label>Boards to play <input type="number" id="opt-boards" value="4" min="1" max="16"></label>
-          <label>Pause between boards <input type="number" id="opt-bridge-pause" value="8" min="0" max="60"> s</label>
+          <label>Boards to play <span class="field"><input type="number" id="opt-boards" value="4" min="1" max="16"></span></label>
+          <label>Pause between boards <span class="field"><input type="number" id="opt-bridge-pause" value="8" min="0" max="60"> <small>s</small></span></label>
           <small>A board is about 40&ndash;60 AI calls, far more than a poker hand. Bridge uses more of your plan.</small>
         </div>
       </div>
 
       <div class="panel seats-panel">
         <div class="row-between">
-          <h2>2 · Seat the players</h2>
+          <h2>The players</h2>
           <div class="seat-count" id="seat-count-box">
-            Players <button class="btn small" id="seat-minus">−</button>
+            <span class="lobby-label">Players</span> <button class="btn small" id="seat-minus">−</button>
             <b id="seat-count">6</b>
             <button class="btn small" id="seat-plus">+</button>
           </div>
         </div>
         <div class="presets hidden" id="presets-bridge">
-          Presets:
+          <span class="lobby-label">Presets</span>
           <button class="btn small" data-preset="bridge_claude">You + Claude vs 2 Codex</button>
           <button class="btn small" data-preset="bridge_codex">You + Codex vs 2 Claude</button>
           <button class="btn small" data-preset="bridge_bots">Free test (local bots)</button>
           <button class="btn small" data-preset="bridge_watch">Watch Claude vs Codex</button>
         </div>
         <div class="presets" id="presets-standard">
-          Presets:
+          <span class="lobby-label">Presets</span>
           <button class="btn small" data-preset="mixed">You + 3 Claude + 2 Codex</button>
           <button class="btn small" data-preset="full">You + Claude/Codex/OpenRouter ×7</button>
           <button class="btn small" data-preset="claude">You + 4 Claude</button>
@@ -85,7 +90,7 @@
           Claude Code and Codex use your <b>subscription</b> logins; OpenRouter uses your API key (pay-per-token).
           Use <b>Test</b> to check a seat before you play.</p>
         <div class="row-end">
-          <button class="btn primary big" id="start-game">Deal me in ▶</button>
+          <button class="btn primary big" id="start-game">Deal me in</button>
         </div>
         <div id="start-error" class="error"></div>
       </div>
@@ -95,10 +100,11 @@
   <!-- ======================= TABLE ======================= -->
   <section id="table-screen" class="screen hidden">
     <header class="topbar">
-      <button class="btn ghost" id="back-lobby">← Lobby</button>
+      <button class="btn ghost" id="back-lobby">Lobby</button>
       <h1 id="table-title">Texas Hold'em</h1>
       <div id="table-info" class="table-info"></div>
       <div id="status-line" class="status-line"></div>
+      <button class="btn ghost" id="sound-toggle" title="Card and chip sounds">Sound on</button>
       <button class="btn ghost" id="open-settings-2" title="Settings">Settings</button>
       <button class="btn danger" id="stop-game">Stop</button>
     </header>
@@ -170,6 +176,7 @@
   </datalist>
   <datalist id="or-models"></datalist>
 
+  <script src="/sound.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

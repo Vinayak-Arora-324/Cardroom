@@ -1,0 +1,114 @@
+/* ---------------- table ---------------- */
+#table-screen { height: 100vh; }
+.table-layout { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+@media (max-width: 1000px) { .table-layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 190px; } .sidebar { border-left: 0; border-top: 1px solid var(--rule); } }
+
+/* The room: warm black, with a soft pool of lamp light over the table. */
+.felt-wrap { position: relative; min-height: 0; overflow: hidden;
+  background: radial-gradient(ellipse 60% 55% at 50% 45%, rgba(255, 226, 170, .07), transparent 70%), var(--ink); }
+
+/* The table: baize under a lamp, a dark seam, a thin brass inlay, a walnut rail and a floor shadow. */
+.felt { position: absolute; left: 11%; right: 11%; top: 15%; bottom: 19%;
+  border-radius: 50%;
+  background: var(--grain), radial-gradient(ellipse at 50% 38%, var(--baize-hi) 0%, var(--baize) 45%, var(--baize-deep) 100%);
+  background-blend-mode: soft-light, normal;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55), inset 0 0 60px rgba(0, 0, 0, .45),
+    0 0 0 1px var(--brass-lo), 0 0 0 15px var(--wood), 0 0 0 16px var(--wood-lo), 0 24px 50px rgba(0, 0, 0, .65); }
+/* The printed line on the felt. */
+.felt::after { content: ""; position: absolute; inset: 9%; border-radius: 50%;
+  border: 1px solid rgba(239, 231, 214, .10); pointer-events: none; }
+
+/* Centre of the table. */
+.center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.board { display: flex; gap: 8px; min-height: var(--card-h); }
+.pot { font-family: var(--serif); font-size: 26px; font-weight: 600; color: var(--ivory);
+  font-variant-numeric: lining-nums tabular-nums; text-shadow: 0 1px 2px rgba(0, 0, 0, .5); text-align: center; }
+.pot small { display: block; font-family: var(--sans); font-size: 11px; font-weight: 400; color: rgba(239, 231, 214, .6);
+  font-variant-numeric: lining-nums; text-shadow: none; }
+.center .label { font-family: var(--sans); color: rgba(239, 231, 214, .55); font-size: 11px; text-transform: uppercase;
+  letter-spacing: var(--track-label); min-height: 1.4em; }
+
+.seats-layer { position: absolute; inset: 0; pointer-events: none; }
+
+/* Seats: engraved place cards on the felt. */
+.seat { position: absolute; transform: translate(-50%, -50%); width: 176px; pointer-events: auto;
+  background: color-mix(in srgb, var(--ink-2) 94%, transparent);
+  border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 8px 10px;
+  box-shadow: var(--shadow-2);
+  transition: border-color 200ms var(--ease), opacity 200ms var(--ease); }
+.seat.pinned { transform: translateX(-50%); }
+.seat.turn { border-color: var(--brass); box-shadow: inset 0 2px 0 var(--brass), var(--shadow-2); }
+.seat.folded, .seat.out { opacity: .42; }
+.seat.winner { border-color: var(--win); box-shadow: inset 0 2px 0 var(--win), var(--shadow-2); }
+.seat .head { display: flex; align-items: baseline; gap: 7px; }
+/* The provider is a 6px dot, not a label. */
+.seat .badge { font-size: 0; width: 6px; height: 6px; border-radius: 50%; padding: 0; flex: none; align-self: center; }
+.seat .badge.human { background: var(--human); }
+.seat .badge.claude { background: var(--claude); }
+.seat .badge.codex { background: var(--codex); }
+.seat .badge.openrouter { background: var(--openrouter); }
+.seat .badge.bot { background: var(--bot); }
+.seat .name { font-family: var(--serif); font-size: 18px; font-weight: 600; line-height: 1.1; color: var(--ivory);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.seat .model { font-family: var(--sans); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.seat .stack { margin-left: auto; align-self: flex-end; min-width: 20px; min-height: 14px; }
+.seat .chips { font-family: var(--serif); font-size: 18px; font-weight: 600; line-height: 1.1; color: var(--brass-hi);
+  font-variant-numeric: lining-nums tabular-nums; }
+.seat .cards { display: flex; gap: 4px; margin: 5px 0 3px; min-height: calc(var(--card-h) * .8); }
+.seat .cards .card { --card-w: 37px; --card-h: 53px; }
+.seat .meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; gap: 6px; min-height: 18px; white-space: nowrap; overflow: hidden; }
+.seat .action { font-family: var(--sans); font-size: 11px; text-transform: uppercase; letter-spacing: var(--track-label); color: var(--ivory); font-weight: 600; }
+.seat .hand-name { font-family: var(--sans); color: var(--win); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+/* SB / BB, and the bridge role tags, are small engraved labels. */
+.blind-tag { font-family: var(--sans); font-size: 10px; text-transform: uppercase; letter-spacing: var(--track-label); color: var(--parchment);
+  border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 0 4px; line-height: 1.5; }
+.thinking { font-family: var(--sans); font-size: 11px; color: var(--brass-hi); font-variant-numeric: lining-nums tabular-nums;
+  display: flex; align-items: center; gap: 5px; flex: none; }
+.spinner { width: 10px; height: 10px; border: 1px solid var(--rule-strong); border-top-color: var(--brass); border-radius: 50%;
+  animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* blackjack */
+.bj-hands { display: flex; gap: 2px 8px; flex-wrap: wrap; min-height: 78px; }
+.bj-hand { padding: 2px 2px 3px; border-bottom: 1px solid transparent; }
+.bj-hand.active { border-bottom-color: var(--brass); }
+.bj-hand .cards { margin: 3px 0 1px; }
+.bj-hand .info { font-family: var(--sans); font-size: 11px; display: flex; gap: 6px; align-items: center; color: var(--parchment);
+  font-variant-numeric: lining-nums tabular-nums; }
+.res { font-family: var(--sans); font-size: 10px; text-transform: uppercase; letter-spacing: var(--track-label); font-weight: 600; }
+.res.win, .res.blackjack { color: var(--win); }
+.res.lose, .res.bust { color: var(--red); }
+.res.push { color: var(--parchment); }
+.dealer-area { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+
+/* bridge */
+.seat.bridge { width: 190px; }
+.compass { font-family: var(--serif); font-size: 16px; font-weight: 700; color: var(--brass); line-height: 1.1; }
+.role-tag { font-family: var(--sans); font-size: 10px; text-transform: uppercase; letter-spacing: var(--track-label); color: var(--brass);
+  border: 1px solid var(--brass-lo); border-radius: var(--radius); padding: 0 4px; line-height: 1.5; }
+.hand-rows { margin-top: 5px; font-family: var(--sans); font-size: 13px; line-height: 1.35; color: var(--ivory);
+  font-variant-numeric: lining-nums tabular-nums; }
+.hand-rows .hrow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hand-rows .sym, .sym { display: inline-block; width: 15px; font-weight: 600; color: var(--ivory); }
+.sym.h, .sym.d { color: var(--red); }
+.hidden-count { margin-top: 5px; font-family: var(--sans); color: var(--dim); font-size: 11px;
+  text-transform: uppercase; letter-spacing: var(--track-label); }
+.auction { border-collapse: collapse; background: transparent; font-size: 14px; }
+.auction th, .auction td { padding: 3px 14px; text-align: center; min-width: 56px; }
+.auction th { font-family: var(--sans); color: rgba(239, 231, 214, .6); font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: var(--track-label); padding-bottom: 6px; border-bottom: 1px solid rgba(239, 231, 214, .18); }
+.auction td { font-family: var(--serif); font-size: 18px; font-weight: 600; color: var(--ivory); }
+.auction th.vul { color: var(--red); }
+.call.h, .call.d { color: var(--red); }
+.contract-line { font-family: var(--serif); font-size: 22px; font-weight: 600; color: var(--ivory); line-height: 1.2; }
+.tricks-line { font-family: var(--sans); color: rgba(239, 231, 214, .65); font-size: 11px; text-transform: uppercase;
+  letter-spacing: var(--track-label); }
+.trick-box { position: relative; width: 210px; height: 190px; }
+.trick-box .slot { position: absolute; transform: translate(-50%, -50%); }
+.trick-box .rel-0 { left: 50%; top: 78%; }
+.trick-box .rel-1 { left: 20%; top: 50%; }
+.trick-box .rel-2 { left: 50%; top: 22%; }
+.trick-box .rel-3 { left: 80%; top: 50%; }
+.trick-box .slot.winning .card { outline: 1px solid var(--brass); outline-offset: 2px; }
+.result-line { font-family: var(--serif); font-style: italic; font-weight: 500; font-size: 20px; color: var(--ivory); }

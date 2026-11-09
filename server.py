@@ -14,7 +14,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from table import agents, config
+from table import agents, config, personas
 from table.blackjack import Blackjack
 from table.bridge import Bridge
 from table.poker import Holdem
@@ -98,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
                 g.wait_version(since, timeout=20)
             return self.send_json(g.snapshot())
         if path == "/api/settings":
-            return self.send_json({"settings": config.public(), "clis": agents.detect_clis(), "catalog": agents.model_catalog()})
+            return self.send_json({"settings": config.public(), "clis": agents.detect_clis(), "catalog": agents.model_catalog(), "personas": personas.menu()})
         if path == "/api/openrouter/models":
             return self.send_json({"models": agents.openrouter_models()})
         if path == "/" or path == "/index.html":

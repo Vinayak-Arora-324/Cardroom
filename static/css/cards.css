@@ -1,0 +1,73 @@
+/* Physical objects: playing cards, chips, the dealer button.
+   Cards are sized from --card-w so the same rules hold at 46px and at the 37px seat size. */
+
+/* ---- dealer button: a small ivory puck ---- */
+.dealer-btn { background: var(--card-face); color: var(--card-ink); font: 700 12px/1 var(--serif); width: 18px; height: 18px;
+  border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 1px var(--card-edge) inset, 0 1px 0 #a8a08c, 0 2px 3px rgba(0, 0, 0, .5); }
+
+/* ---- chips: clay discs seen at an angle; a column of them overlaps into a stack ---- */
+.chip { --face: #e9e3d3; --edge: #a8a08c; --stripe: #3d5a80; display: block; flex: none; box-sizing: border-box;
+  width: 20px; height: 11px; border-radius: 50%;
+  background: radial-gradient(ellipse at center, var(--face) 0 52%, transparent 53%),
+    repeating-conic-gradient(var(--stripe) 0 12deg, var(--face) 12deg 45deg);
+  border: 1px solid color-mix(in srgb, var(--edge) 70%, black);
+  box-shadow: 0 2px 0 var(--edge), 0 3px 2px rgba(0, 0, 0, .45); }
+.chip.c5 { --face: #a8322f; --edge: #6c1c1b; --stripe: #e9e3d3; }
+.chip.c25 { --face: #2f7a55; --edge: #1b4a33; --stripe: #e9e3d3; }
+.chip.c100 { --face: #2a2a2d; --edge: #0d0d0f; --stripe: #c9a961; }
+.chip.c500 { --face: #5d4691; --edge: #382a5a; --stripe: #e9e3d3; }
+.chip.c1000 { --face: #c9a961; --edge: #8f7437; --stripe: #2a2a2d; }
+.chip.c5000 { --face: #b8642a; --edge: #74401a; --stripe: #e9e3d3; }
+.chip.c25000 { --face: #2c7f86; --edge: #184b4f; --stripe: #e9e3d3; }
+.chip.c100000 { --face: #b05c85; --edge: #6e3552; --stripe: #e9e3d3; }
+.chip.mini { display: inline-block; width: 12px; height: 8px; vertical-align: -1px; margin-right: 3px;
+  box-shadow: 0 1px 0 var(--edge); }
+.chip.fly { position: fixed; z-index: 60; pointer-events: none; }
+.chips-viz { display: inline-flex; align-items: flex-end; gap: 2px; padding-bottom: 3px; }
+.chip-col { display: flex; flex-direction: column-reverse; }
+.chip-col .chip + .chip { margin-bottom: -8px; }
+.bet-spot { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 1px;
+  animation: chips-in .2s ease-out .3s backwards; }
+.bet-spot .amt { background: none; color: var(--ivory); font: 600 12px/1 var(--sans); padding: 0; white-space: nowrap;
+  font-variant-numeric: lining-nums tabular-nums; text-shadow: 0 1px 2px rgba(0, 0, 0, .7); }
+.pot-pile { display: flex; align-items: flex-end; min-height: 26px; }
+.bet-chips { display: flex; align-items: flex-end; min-width: 80px; min-height: 30px; }
+@keyframes chips-in { from { opacity: 0; } }
+
+/* ---- playing cards ---- */
+.card { --suit: none; box-sizing: border-box; width: var(--card-w); height: var(--card-h); position: relative; flex: none;
+  user-select: none; background: var(--card-face); color: var(--card-ink);
+  border-radius: calc(var(--card-w) * .09);
+  box-shadow: 0 0 0 1px var(--card-edge) inset, var(--shadow-card); }
+.card.red { color: var(--card-red); }
+
+/* rank: top-left index */
+.card .r { position: absolute; top: calc(var(--card-w) * .05); left: calc(var(--card-w) * .09);
+  font: 700 calc(var(--card-w) * .44)/1 var(--serif); font-variant-numeric: lining-nums; letter-spacing: -.04em; }
+
+/* suit pips: drawn as masks so they are crisp and identical everywhere */
+.card .p, .card .s { background: currentColor; -webkit-mask: var(--suit) center / contain no-repeat; mask: var(--suit) center / contain no-repeat; }
+.card.suit-s { --suit: var(--suit-s); }
+.card.suit-h { --suit: var(--suit-h); }
+.card.suit-d { --suit: var(--suit-d); }
+.card.suit-c { --suit: var(--suit-c); }
+
+/* corner pip, directly under the rank */
+.card .p { position: absolute; left: calc(var(--card-w) * .10); top: calc(var(--card-w) * .50);
+  width: calc(var(--card-w) * .24); height: calc(var(--card-w) * .24); }
+
+/* big centre pip, lower right of centre */
+.card .s { position: absolute; right: calc(var(--card-w) * .10); bottom: calc(var(--card-w) * .12);
+  width: calc(var(--card-w) * .50); height: calc(var(--card-w) * .50); }
+
+/* card back: oxblood with a fine diamond lattice, ivory margin, dark inner seam */
+.card.back { background-color: var(--oxblood);
+  background-image: repeating-linear-gradient(45deg, rgba(239, 231, 214, .16) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-45deg, rgba(239, 231, 214, .16) 0 1px, transparent 1px 6px);
+  background-clip: padding-box;
+  border: calc(var(--card-w) * .07) solid var(--card-face);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .35), var(--shadow-card); }
+
+/* empty board slot on the felt */
+.card.ghost { background: transparent; box-shadow: none; border: 1px dashed rgba(239, 231, 214, .16); }
