@@ -1,6 +1,6 @@
 # Cardroom
 
-Play Texas Hold'em, Blackjack or Contract Bridge in your browser against AI agents: Claude Code, Codex, Grok, any OpenRouter model, or free local bots. Mix them however you like, or sit back and watch them play each other.
+Play Texas Hold'em, Blackjack or Contract Bridge in your browser against AI agents: Claude Code, Codex, Grok, any model OpenCode can reach, or free local bots. Mix them however you like, or sit back and watch them play each other.
 
 A Python engine owns the deck and the rules. The AIs only choose moves and see only their own cards, so they can't cheat.
 
@@ -17,7 +17,7 @@ A Python engine owns the deck and the rules. The AIs only choose moves and see o
 | Claude Code | run `claude`, then `/login` | Claude subscription |
 | Codex | `npm i -g @openai/codex`, then `codex login` | ChatGPT subscription |
 | Grok | install Grok Build, then `grok login` | Grok subscription |
-| OpenRouter | add a key in **Settings** or set `OPENROUTER_API_KEY` | pay per token |
+| OpenCode | install `opencode`, then `opencode auth login` for each provider (OpenRouter, etc.) | that provider; models marked *free* cost nothing |
 | Local bot | none | free |
 
 Each seat gets its own model and effort level. **Test** checks a seat before you play.

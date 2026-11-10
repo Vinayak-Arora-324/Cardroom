@@ -5,9 +5,11 @@
     python3 server.py --port 9000 --no-browser
 """
 import argparse
+import atexit
 import json
 import mimetypes
 import os
+import signal
 import sys
 import threading
 import webbrowser
@@ -99,8 +101,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(g.snapshot())
         if path == "/api/settings":
             return self.send_json({"settings": config.public(), "clis": agents.detect_clis(), "catalog": agents.model_catalog(), "personas": personas.menu()})
-        if path == "/api/openrouter/models":
-            return self.send_json({"models": agents.openrouter_models()})
         if path == "/" or path == "/index.html":
             path = "/index.html"
         file = os.path.normpath(os.path.join(STATIC, path.lstrip("/")))
@@ -141,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True})
             if path == "/api/settings":
                 config.update(body)
-                return self.send_json({"settings": config.public(), "clis": agents.detect_clis()})
+                return self.send_json({"settings": config.public(), "clis": agents.detect_clis(), "catalog": agents.model_catalog()})
             if path == "/api/test-seat":
                 return self.send_json(agents.test_seat(body))
             return self.send_json({"error": "not found"}, 404)
@@ -160,12 +160,16 @@ def main():
     url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '') else args.host}:{args.port}"
     print(f"AI Card Table running at {url}  (Ctrl+C to quit)")
     clis = agents.detect_clis()
-    for kind in ("claude", "codex", "grok"):
+    for kind in ("claude", "codex", "grok", "opencode"):
         info = clis[kind]
-        print(f"  {kind:<7} {'found: ' + info['version'] if info['path'] else 'not found on PATH'}")
-    print(f"  openrouter key {'set' if clis['openrouter']['key_set'] else 'not set (add it in Settings)'}")
+        print(f"  {kind:<8} {'found: ' + info['version'] if info['path'] else 'not found on PATH'}")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    atexit.register(agents.kill_running)
+
+    def on_term(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, on_term)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

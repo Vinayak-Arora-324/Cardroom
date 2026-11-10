@@ -47,7 +47,7 @@
 .seat .badge.claude { background: var(--claude); }
 .seat .badge.codex { background: var(--codex); }
 .seat .badge.grok { background: var(--grok); }
-.seat .badge.openrouter { background: var(--openrouter); }
+.seat .badge.opencode { background: var(--opencode); }
 .seat .badge.bot { background: var(--bot); }
 .seat .name { font-family: var(--serif); font-size: 18px; font-weight: 600; line-height: 1.1; color: var(--ivory);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }

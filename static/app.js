@@ -3,13 +3,13 @@
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const KINDS = { human: "You", claude: "Claude Code", codex: "Codex", grok: "Grok", openrouter: "OpenRouter", bot: "Local bot" };
-const BADGE = { human: "YOU", claude: "CLAUDE", codex: "CODEX", grok: "GROK", openrouter: "OPENROUTER", bot: "BOT" };
+const KINDS = { human: "You", claude: "Claude Code", codex: "Codex", grok: "Grok", opencode: "OpenCode", bot: "Local bot" };
+const BADGE = { human: "YOU", claude: "CLAUDE", codex: "CODEX", grok: "GROK", opencode: "OPENCODE", bot: "BOT" };
 const NAME_POOL = {
   claude: ["Claude", "Claudette", "Sonny", "Opie", "Haiku", "Fable"],
   codex: ["Codex", "Cody", "Dex", "Gippy", "Turbo", "Omni"],
   grok: ["Grok", "Groucho", "Rocket", "Ziggy", "Nova", "Sparks"],
-  openrouter: ["Router", "Gemma", "Llama", "Mistral", "Qwen", "Deepy"],
+  opencode: ["Ocho", "Gemma", "Llama", "Mistral", "Qwen", "Deepy"],
   bot: ["Bot", "Robo", "Chip", "Dealer Dan", "Basic Bill", "Tilt"],
 };
 const PERSONALITIES = [
@@ -55,7 +55,7 @@ function defaultSeat(kind, i) {
   return {
     kind,
     name: kind === "human" ? "You" : pool[(sameKind + i) % pool.length] + (sameKind >= pool.length ? ` ${sameKind + 1}` : ""),
-    model: kind === "claude" ? settings.claude_default_model || "sonnet" : kind === "codex" ? settings.codex_default_model || "" : kind === "grok" ? settings.grok_default_model || "" : kind === "openrouter" ? settings.openrouter_default_model || "" : "",
+    model: kind === "claude" ? settings.claude_default_model || "sonnet" : kind === "codex" ? settings.codex_default_model || "" : kind === "grok" ? settings.grok_default_model || "" : kind === "opencode" ? settings.opencode_default_model || "" : "",
     effort: ["claude", "codex", "grok"].includes(kind) ? "low" : "",
     personality: kind === "human" || kind === "bot" ? "" : PERSONALITIES[i % PERSONALITIES.length],
     persona: "random",
@@ -65,10 +65,10 @@ function defaultSeat(kind, i) {
 function preset(name) {
   const plans = {
     mixed: ["human", "claude", "claude", "claude", "codex", "codex"],
-    full: ["human", "claude", "claude", "codex", "grok", "openrouter", "bot"],
+    full: ["human", "claude", "claude", "codex", "grok", "opencode", "bot"],
     claude: ["human", "claude", "claude", "claude", "claude"],
     bots: ["human", "bot", "bot", "bot", "bot", "bot"],
-    spectate: ["claude", "claude", "codex", "grok", "openrouter"],
+    spectate: ["claude", "claude", "codex", "grok", "opencode"],
     // Bridge seats run South, West, North, East: seats 1 and 3 are partners.
     bridge_claude: ["human", "codex", "claude", "codex"],
     bridge_codex: ["human", "claude", "codex", "claude"],
@@ -91,8 +91,8 @@ function preset(name) {
 const CUSTOM_MODEL = "__custom__";
 
 function modelField(s) {
-  if (s.kind === "openrouter") {
-    return `<input data-k="model" value="${esc(s.model)}" placeholder="provider/model" list="or-models" title="Model">`;
+  if (s.kind === "opencode") {
+    return `<input data-k="model" value="${esc(s.model)}" placeholder="model: default (provider/model)" list="opencode-models" title="Model (type to search; free ones are marked)">`;
   }
   if (!["claude", "codex", "grok"].includes(s.kind)) return '<select data-k="model" disabled><option>—</option></select>';
   const ids = (catalog[s.kind]?.models || []).map((m) => m.id);
@@ -159,7 +159,7 @@ function renderSeats() {
           renderSeats();
         } else {
           s[k] = el.value;
-          if (k === "model" && s.kind !== "openrouter") renderSeats();  // effort levels depend on the model
+          if (k === "model") renderSeats();  // effort levels depend on the model
         }
         saveLobby();
       });
@@ -215,7 +215,10 @@ function loadLobby() {
   try {
     const saved = JSON.parse(localStorage.getItem("aitable.lobby") || "null");
     if (saved && Array.isArray(saved.seats) && saved.seats.length >= 2) {
-      seats = saved.seats;
+      // OpenRouter seats from older versions now go through OpenCode's OpenRouter provider.
+      seats = saved.seats.map((s) => s.kind === "openrouter"
+        ? { ...s, kind: "opencode", model: s.model ? `openrouter/${s.model}` : "", effort: "" }
+        : s);
       const radio = document.querySelector(`input[name="game"][value="${saved.game}"]`);
       if (radio) radio.checked = true;
       return true;
@@ -243,12 +246,12 @@ function syncOptionsVisibility() {
 }
 
 function renderBackendStatus() {
-  const c = clis.claude || {}, x = clis.codex || {}, g = clis.grok || {}, o = clis.openrouter || {};
+  const c = clis.claude || {}, x = clis.codex || {}, g = clis.grok || {}, o = clis.opencode || {};
   $("#backend-status").innerHTML = `
     <span class="pill ${c.path ? "ok" : "bad"}" title="${esc(c.path || "not on PATH")}">Claude Code ${c.path ? esc((c.version || "").split(" ")[0]) : "not found"}</span>
     <span class="pill ${x.path ? "ok" : "bad"}" title="${esc(x.path || "not on PATH")}">Codex ${x.path ? esc((x.version || "").replace("codex-cli ", "")) : "not found"}</span>
     <span class="pill ${g.path ? "ok" : "bad"}" title="${esc(g.path || "not on PATH")}">Grok ${g.path ? esc((g.version || "").split(" ")[1] || "") : "not found"}</span>
-    <span class="pill ${o.key_set ? "ok" : "bad"}">OpenRouter ${o.key_set ? "key set" : "no key"}</span>`;
+    <span class="pill ${o.path ? "ok" : "bad"}" title="${esc(o.path || "not on PATH")}">OpenCode ${o.path ? esc((o.version || "").split(" ").pop()) : "not found"}</span>`;
 }
 
 async function startGame() {
@@ -257,7 +260,7 @@ async function startGame() {
   if (seats.some((s) => s.kind === "claude") && !clis.claude?.path) problems.push("Claude Code CLI not found (install it or set its path in Settings)");
   if (seats.some((s) => s.kind === "codex") && !clis.codex?.path) problems.push("Codex CLI not found (npm i -g @openai/codex, or set its path in Settings)");
   if (seats.some((s) => s.kind === "grok") && !clis.grok?.path) problems.push("Grok CLI not found (install Grok Build, or set its path in Settings)");
-  if (seats.some((s) => s.kind === "openrouter") && !clis.openrouter?.key_set) problems.push("No OpenRouter API key (add it in Settings)");
+  if (seats.some((s) => s.kind === "opencode") && !clis.opencode?.path) problems.push("OpenCode CLI not found (install opencode, or set its path in Settings)");
   if (problems.length && !confirm(problems.join("\n") + "\n\nThose seats will fall back to the local bot. Start anyway?")) return;
   try {
     await api.post("/api/game/start", { game: selectedGame(), seats, options: gameOptions() });
@@ -281,70 +284,64 @@ async function loadSettings() {
 
 function openSettings() {
   const s = settings;
-  $("#set-or-key").value = "";
-  $("#set-or-key").placeholder = s.openrouter_api_key ? `saved: ${s.openrouter_api_key}` : s.openrouter_key_from_env ? "using OPENROUTER_API_KEY env var" : "sk-or-v1-…";
-  $("#set-or-model").value = s.openrouter_default_model || "";
   $("#set-claude-path").value = s.claude_path || "";
   $("#set-claude-model").value = s.claude_default_model || "";
   $("#set-codex-path").value = s.codex_path || "";
   $("#set-codex-model").value = s.codex_default_model || "";
   $("#set-grok-path").value = s.grok_path || "";
   $("#set-grok-model").value = s.grok_default_model || "";
+  $("#set-opencode-path").value = s.opencode_path || "";
+  $("#set-opencode-model").value = s.opencode_default_model || "";
   $("#set-claude-sub").checked = !!s.claude_force_subscription;
   $("#set-codex-sub").checked = !!s.codex_force_subscription;
   $("#set-grok-sub").checked = !!s.grok_force_subscription;
   $("#set-par-claude").value = s.max_parallel_claude;
   $("#set-par-codex").value = s.max_parallel_codex;
   $("#set-par-grok").value = s.max_parallel_grok;
-  $("#set-par-or").value = s.max_parallel_openrouter;
+  $("#set-par-opencode").value = s.max_parallel_opencode;
   $("#set-par-bj").checked = !!s.parallel_blackjack;
   $("#set-timeout").value = s.agent_timeout;
   $("#set-pace").value = s.ai_pace_seconds;
   $("#set-reveal").checked = !!s.reveal_ai_cards;
   $("#settings-dialog").showModal();
-  loadOpenRouterModels();
 }
 
 async function saveSettings(extra = {}) {
   const body = {
-    openrouter_default_model: $("#set-or-model").value,
     claude_path: $("#set-claude-path").value,
     claude_default_model: $("#set-claude-model").value,
     codex_path: $("#set-codex-path").value,
     codex_default_model: $("#set-codex-model").value,
     grok_path: $("#set-grok-path").value,
     grok_default_model: $("#set-grok-model").value,
+    opencode_path: $("#set-opencode-path").value,
+    opencode_default_model: $("#set-opencode-model").value,
     claude_force_subscription: $("#set-claude-sub").checked,
     codex_force_subscription: $("#set-codex-sub").checked,
     grok_force_subscription: $("#set-grok-sub").checked,
     max_parallel_claude: +$("#set-par-claude").value || 4,
     max_parallel_codex: +$("#set-par-codex").value || 4,
     max_parallel_grok: +$("#set-par-grok").value || 4,
-    max_parallel_openrouter: +$("#set-par-or").value || 6,
+    max_parallel_opencode: +$("#set-par-opencode").value || 4,
     parallel_blackjack: $("#set-par-bj").checked,
     agent_timeout: +$("#set-timeout").value || 150,
     ai_pace_seconds: +$("#set-pace").value,
     reveal_ai_cards: $("#set-reveal").checked,
     ...extra,
   };
-  const key = $("#set-or-key").value.trim();
-  if (key) body.openrouter_api_key = key;
   const r = await api.post("/api/settings", body);
   settings = r.settings;
   clis = r.clis;
   renderBackendStatus();
+  catalog = r.catalog;  // a new CLI path can change which models exist
+  fillOpencodeModels();
+  renderSeats();
 }
 
-let orModelsLoaded = false;
-async function loadOpenRouterModels() {
-  if (orModelsLoaded) return;
-  try {
-    const r = await api.get("/api/openrouter/models");
-    if (r.models?.length) {
-      $("#or-models").innerHTML = r.models.map((m) => `<option value="${esc(m)}">`).join("");
-      orModelsLoaded = true;
-    }
-  } catch (_) { /* offline is fine */ }
+// OpenCode reaches hundreds of models, so its seats get a searchable list (free ones first).
+function fillOpencodeModels() {
+  const models = catalog.opencode?.models || [];
+  $("#opencode-models").innerHTML = models.map((m) => `<option value="${esc(m.id)}">${m.free ? "free" : ""}</option>`).join("");
 }
 
 // ======================================================================
@@ -604,7 +601,7 @@ function renderStats() {
   const rows = state.players.filter((p) => p.kind !== "human").map((p) => `
     <tr><td><span class="badge ${p.kind}">${BADGE[p.kind]}</span> ${esc(p.name)}<br><small>${esc(p.model || "default")}</small></td>
     <td>${p.stats.calls}</td><td>${p.stats.avg_seconds}s</td><td>${p.stats.fallbacks}</td>
-    <td>${p.kind === "openrouter" ? "$" + p.stats.cost_usd.toFixed(4) : p.kind === "bot" ? "free" : "subscription"}</td></tr>
+    <td>${p.kind === "opencode" ? "$" + p.stats.cost_usd.toFixed(4) : p.kind === "bot" ? "free" : "subscription"}</td></tr>
     ${p.stats.last_error ? `<tr><td colspan="5" class="err">${esc(p.stats.last_error)}</td></tr>` : ""}`).join("");
   morph($("#stats"), `<table><tr><th>Agent</th><th>Calls</th><th>Avg</th><th>Fallbacks</th><th>Cost</th></tr>${rows}</table>
     <p class="hint">“Fallbacks” = times the agent errored or timed out and the local bot made the move instead.</p>`);
@@ -1053,7 +1050,7 @@ function showLobby() {
 // ======================================================================
 async function init() {
   await loadSettings();
-  loadOpenRouterModels();
+  fillOpencodeModels();
   if (!loadLobby()) preset("mixed");
   renderSeats();
   syncOptionsVisibility();
@@ -1066,11 +1063,6 @@ async function init() {
   $("#open-settings-2").onclick = openSettings;
   $("#settings-cancel").onclick = () => $("#settings-dialog").close();
   $("#settings-save").onclick = async () => { await saveSettings(); $("#settings-dialog").close(); };
-  $("#clear-or-key").onclick = async () => {
-    if (!confirm("Remove the saved OpenRouter key?")) return;
-    await saveSettings({ openrouter_api_key: "" });
-    $("#settings-dialog").close();
-  };
   $("#back-lobby").onclick = showLobby;
   renderSoundToggle();
   $("#sound-toggle").onclick = () => {

@@ -59,7 +59,7 @@
 .seat-row.kind-claude::before { background: var(--claude); }
 .seat-row.kind-codex::before { background: var(--codex); }
 .seat-row.kind-grok::before { background: var(--grok); }
-.seat-row.kind-openrouter::before { background: var(--openrouter); }
+.seat-row.kind-opencode::before { background: var(--opencode); }
 .seat-row.kind-bot::before { background: var(--bot); }
 .seat-row .num { font: 600 18px/1 var(--serif); color: var(--dim); text-align: center; }
 .seat-row input, .seat-row select { width: 100%; min-width: 0; }

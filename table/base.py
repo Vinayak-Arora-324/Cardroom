@@ -24,7 +24,7 @@ def pick_option(options):
 class Player:
     def __init__(self, pid, spec, chips):
         self.id = pid
-        self.kind = spec.get("kind", "bot")           # human | claude | codex | grok | openrouter | bot
+        self.kind = spec.get("kind", "bot")           # human | claude | codex | grok | opencode | bot
         self.name = (spec.get("name") or "").strip()[:24] or f"Player {pid + 1}"
         self.model = (spec.get("model") or "").strip()
         self.effort = (spec.get("effort") or "").strip()
@@ -259,7 +259,7 @@ class BaseGame:
                     error = str(e)
                     player.stats["last_error"] = error[:300]
                     self.add_log(f"{player.name}: {error}", "error")
-                    if "not found" in error or "no OpenRouter API key" in error:
+                    if "not found" in error or "not signed in" in error:
                         break  # retrying won't help
                     continue
                 player.stats["calls"] += 1

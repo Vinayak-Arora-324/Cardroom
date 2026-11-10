@@ -1,7 +1,7 @@
-"""AI backends: Claude Code CLI, Codex CLI, Grok Build CLI, OpenRouter HTTP API, and a local bot.
+"""AI backends: Claude Code CLI, Codex CLI, Grok Build CLI, OpenCode CLI, and a local bot.
 
-Every AI seat gets its own subprocess / HTTP request per decision, so any number
-of Claude Code, Codex or Grok seats can be at the table (and think) at the same time.
+Every AI seat gets its own subprocess per decision, so any number of Claude Code,
+Codex, Grok or OpenCode seats can be at the table (and think) at the same time.
 Per-provider semaphores cap how many run concurrently, which protects your
 subscription rate limits and your laptop's RAM.
 """
@@ -9,12 +9,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 
 from . import config
 
@@ -22,7 +21,7 @@ BACKENDS = {
     "claude": "Claude Code",
     "codex": "Codex",
     "grok": "Grok",
-    "openrouter": "OpenRouter",
+    "opencode": "OpenCode",
     "bot": "Local bot",
 }
 
@@ -98,17 +97,46 @@ def _subprocess_env(strip_keys):
     return env
 
 
+_live = set()          # CLI processes running right now
+_live_lock = threading.Lock()
+
+
+def _kill_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        proc.kill()
+
+
+def kill_running():
+    """Kill every CLI still thinking (they run in their own process groups, so Ctrl+C misses them)."""
+    with _live_lock:
+        procs = list(_live)
+    for proc in procs:
+        _kill_group(proc)
+
+
 def _run(cmd, stdin_text, cwd, timeout, env):
     try:
-        proc = subprocess.run(
-            cmd, input=stdin_text, capture_output=True, text=True,
-            cwd=cwd, timeout=timeout, env=env,
+        # Own process group, so a timeout also kills anything the CLI started (wrappers, servers).
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, cwd=cwd, env=env, start_new_session=True,
         )
     except FileNotFoundError:
         raise AgentError(f"command not found: {cmd[0]}")
+    with _live_lock:
+        _live.add(proc)
+    try:
+        out, err = proc.communicate(stdin_text, timeout=timeout)
     except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        proc.communicate()
         raise AgentError(f"timed out after {timeout}s")
-    return proc
+    finally:
+        with _live_lock:
+            _live.discard(proc)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 def call_claude(seat, system, prompt, schema):
@@ -236,47 +264,73 @@ def call_grok(seat, system, prompt, schema):
     return extract_json(data.get("text", "")), meta
 
 
-def call_openrouter(seat, system, prompt, schema):
+OPENCODE_AGENT = "cardroom"
+
+
+def call_opencode(seat, system, prompt, schema):
     s = config.get()
-    key = config.openrouter_key()
-    if not key:
-        raise AgentError("no OpenRouter API key set (Settings, or OPENROUTER_API_KEY env var)")
-    model = seat.get("model") or s.get("openrouter_default_model") or "openai/gpt-4o-mini"
-    body = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt + "\n\nReply with only the JSON object."},
-        ],
-        "temperature": 0.8,
-        "usage": {"include": True},
+    exe = s.get("opencode_path") or "opencode"
+    # A private agent for this one run: the table's system prompt and no tools at all.
+    agent = {
+        "mode": "primary",
+        "description": "Card player at the AI Card Table",
+        "prompt": system,
+        "tools": {"*": False},
+        "permission": {"*": "deny"},
     }
-    if seat.get("effort"):
-        body["reasoning"] = {"effort": seat["effort"]}
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost/ai-card-table",
-            "X-Title": "AI Card Table",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=s.get("agent_timeout", 150)) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise AgentError(f"OpenRouter HTTP {e.code}: {e.read().decode(errors='replace')[:300]}")
-    except urllib.error.URLError as e:
-        raise AgentError(f"OpenRouter unreachable: {e.reason}")
-    if "error" in data:
-        raise AgentError(f"OpenRouter: {data['error']}")
-    content = data["choices"][0]["message"].get("content") or ""
-    return extract_json(content), {"cost_usd": (data.get("usage") or {}).get("cost")}
+    env = _subprocess_env([])
+    env.update({
+        "OPENCODE_CONFIG_CONTENT": json.dumps({"agent": {OPENCODE_AGENT: agent}}),
+        "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+        "OPENCODE_DISABLE_CLAUDE_CODE": "1",   # don't pull in CLAUDE.md / Claude skills
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+    })
+    cmd = [
+        exe, "run",
+        # A private server reads the agent above; the shared background service would not.
+        "--standalone",
+        "--archived",
+        "--format", "json",
+        "--agent", OPENCODE_AGENT,
+        "--title", "AI Card Table",
+    ]
+    model = seat.get("model") or ""
+    if model and seat.get("effort"):
+        model = f"{model.split('#')[0]}#{seat['effort']}"
+    if model:
+        cmd += ["-m", model]
+    full = prompt + "\n\nReply with only the JSON object."
+    if schema:
+        full += f" It must match this JSON schema: {json.dumps(schema)}"
+    with tempfile.TemporaryDirectory(prefix="aitable-opencode-") as tmp:
+        proc = _run(cmd, full, tmp, s.get("agent_timeout", 150), env)
+    texts, cost, error, last_msg = {}, 0.0, None, None
+    for line in proc.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        part = event.get("part") or {}
+        if event.get("type") == "text" and isinstance(part.get("text"), str):
+            if part.get("messageID") != last_msg:  # only the final message's text counts
+                texts, last_msg = {}, part.get("messageID")
+            texts[part.get("id")] = part["text"]
+        elif event.get("type") == "step_finish":
+            cost += part.get("cost") or 0
+        elif event.get("type") == "error":
+            err = event.get("error") or {}
+            error = (err.get("message") or str(err)) if isinstance(err, dict) else str(err)
+    text = "".join(texts.values())
+    if not text.strip():
+        err = error or proc.stderr.strip() or proc.stdout.strip()
+        low = err.lower()
+        if "api key" in low or "unauthorized" in low or "401" in err or "auth" in low:
+            raise AgentError(f"OpenCode is not signed in to this model's provider: run `opencode auth login` ({err[:200]})")
+        raise AgentError(f"opencode exited {proc.returncode}: {err[-300:]}")
+    return extract_json(text), {"cost_usd": cost}
 
 
-CALLERS = {"claude": call_claude, "codex": call_codex, "grok": call_grok, "openrouter": call_openrouter}
+CALLERS = {"claude": call_claude, "codex": call_codex, "grok": call_grok, "opencode": call_opencode}
 
 
 def ask(seat, system, prompt, schema):
@@ -300,7 +354,8 @@ def ask(seat, system, prompt, schema):
 def detect_clis():
     s = config.get()
     found = {}
-    for kind, default in (("claude", "claude"), ("codex", "codex"), ("grok", "grok")):
+    for kind in ("claude", "codex", "grok", "opencode"):
+        default = kind
         exe = s.get(f"{kind}_path") or default
         path = shutil.which(exe)
         version = None
@@ -310,7 +365,6 @@ def detect_clis():
             except Exception:  # noqa: BLE001
                 version = "?"
         found[kind] = {"path": path, "version": version}
-    found["openrouter"] = {"key_set": bool(config.openrouter_key())}
     return found
 
 
@@ -378,6 +432,48 @@ def _grok_models():
         return []
 
 
+_opencode_cache = {"t": 0, "exe": None, "data": []}
+
+
+def _opencode_is_free(m):
+    """Zero-priced models whose id says free (routers like openrouter/auto list $0 but bill)."""
+    costs = m.get("cost") or []
+    zero = bool(costs) and all(not c.get("input") and not c.get("output") for c in costs)
+    return zero and ("free" in m["id"].lower() or m.get("providerID") == "opencode")
+
+
+def _opencode_models():
+    """Models OpenCode can reach (with their effort variants); [] if unavailable. Cached for 10 min."""
+    exe = config.get().get("opencode_path") or "opencode"
+    c = _opencode_cache
+    if c["exe"] == exe and time.time() - c["t"] < 600 and c["data"]:
+        return c["data"]
+    if not shutil.which(exe):
+        return []
+    out = []
+    try:
+        proc = subprocess.run([exe, "api", "GET", "/api/model"], capture_output=True, text=True, timeout=20)
+        for m in json.loads(proc.stdout)["data"]:
+            if not m.get("enabled", True) or m.get("status") == "deprecated":
+                continue
+            out.append({
+                "id": f"{m['providerID']}/{m['id']}",
+                "efforts": [v["id"] for v in m.get("variants") or []],
+                "free": _opencode_is_free(m),
+            })
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        try:  # older builds: plain list, no effort variants
+            proc = subprocess.run([exe, "models"], capture_output=True, text=True, timeout=20)
+            out = [{"id": line.strip(), "efforts": [], "free": "free" in line.lower()}
+                   for line in proc.stdout.splitlines() if "/" in line]
+        except (OSError, subprocess.SubprocessError):
+            out = []
+    out.sort(key=lambda m: (not m["free"], m["id"]))
+    if out:
+        c.update(t=time.time(), exe=exe, data=out)
+    return out
+
+
 def model_catalog():
     """What the lobby's model and effort dropdowns offer for each backend."""
     codex = _codex_models()
@@ -389,21 +485,6 @@ def model_catalog():
         "claude": {"models": [{"id": m} for m in CLAUDE_MODELS], "efforts": CLAUDE_EFFORTS},
         "codex": {"models": codex, "efforts": codex_efforts},
         "grok": {"models": grok, "efforts": grok_efforts},
-        "openrouter": {"models": [], "efforts": BASIC_EFFORTS},
+        # Effort variants differ per model, so "default model" offers none.
+        "opencode": {"models": _opencode_models(), "efforts": []},
     }
-
-
-_models_cache = {"t": 0, "data": []}
-
-
-def openrouter_models():
-    if time.time() - _models_cache["t"] < 3600 and _models_cache["data"]:
-        return _models_cache["data"]
-    try:
-        with urllib.request.urlopen("https://openrouter.ai/api/v1/models", timeout=20) as resp:
-            data = json.loads(resp.read())["data"]
-        models = sorted(m["id"] for m in data)
-        _models_cache.update(t=time.time(), data=models)
-        return models
-    except Exception:  # noqa: BLE001
-        return _models_cache["data"]

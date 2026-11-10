@@ -7,14 +7,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.environ.get("AITABLE_SETTINGS", os.path.join(ROOT, "settings.json"))
 
 DEFAULTS = {
-    "openrouter_api_key": "",
-    "openrouter_default_model": "openai/gpt-4o-mini",
     "claude_path": "",
     "codex_path": "",
     "grok_path": "",
+    "opencode_path": "",
     "claude_default_model": "sonnet",
     "codex_default_model": "",
     "grok_default_model": "",
+    "opencode_default_model": "",         # provider/model, e.g. openrouter/openrouter/free
     "claude_force_subscription": True,   # strip ANTHROPIC_API_KEY from the CLI's env
     "codex_force_subscription": True,    # strip OPENAI_API_KEY from the CLI's env
     "grok_force_subscription": True,     # strip XAI_API_KEY from the CLI's env
@@ -24,7 +24,7 @@ DEFAULTS = {
     "max_parallel_claude": 4,
     "max_parallel_codex": 4,
     "max_parallel_grok": 4,
-    "max_parallel_openrouter": 6,
+    "max_parallel_opencode": 4,
     "agent_timeout": 150,
     "ai_pace_seconds": 1.0,               # pause after each AI action so you can follow along
     "reveal_ai_cards": False,             # spectator / debug mode
@@ -40,7 +40,9 @@ def _load():
     if os.path.exists(PATH):
         try:
             with open(PATH) as f:
-                data.update(json.load(f))
+                saved = json.load(f)
+            # Drop settings from older versions (such as a stored OpenRouter key).
+            data.update({k: v for k, v in saved.items() if k in DEFAULTS})
         except (OSError, json.JSONDecodeError):
             pass
     return data
@@ -62,8 +64,6 @@ def update(changes):
         for k, v in changes.items():
             if k not in DEFAULTS:
                 continue
-            if k == "openrouter_api_key" and (v is None or "•" in str(v)):
-                continue  # masked value echoed back from the UI: keep the stored key
             default = DEFAULTS[k]
             if isinstance(default, bool):
                 v = bool(v)
@@ -82,14 +82,6 @@ def update(changes):
         return dict(_settings)
 
 
-def openrouter_key():
-    return get().get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY", "")
-
-
 def public():
-    """Settings safe to send to the browser (API key masked)."""
-    s = get()
-    key = s.get("openrouter_api_key", "")
-    s["openrouter_api_key"] = ("•" * 8 + key[-4:]) if key else ""
-    s["openrouter_key_from_env"] = bool(not key and os.environ.get("OPENROUTER_API_KEY"))
-    return s
+    """Settings to send to the browser."""
+    return get()
