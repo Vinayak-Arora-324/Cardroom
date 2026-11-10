@@ -80,14 +80,14 @@
         <div class="presets" id="presets-standard">
           <span class="lobby-label">Presets</span>
           <button class="btn small" data-preset="mixed">You + 3 Claude + 2 Codex</button>
-          <button class="btn small" data-preset="full">You + Claude/Codex/OpenRouter ×7</button>
+          <button class="btn small" data-preset="full">You + Claude/Codex/Grok/OpenRouter ×7</button>
           <button class="btn small" data-preset="claude">You + 4 Claude</button>
           <button class="btn small" data-preset="bots">Free test (local bots)</button>
           <button class="btn small" data-preset="spectate">Watch AIs only</button>
         </div>
         <div id="seats"></div>
-        <p class="hint">Every Claude Code / Codex seat is its own independent CLI session, so they can all sit at the table together.
-          Claude Code and Codex use your <b>subscription</b> logins; OpenRouter uses your API key (pay-per-token).
+        <p class="hint">Every Claude Code / Codex / Grok seat is its own independent CLI session, so they can all sit at the table together.
+          Claude Code, Codex and Grok use your <b>subscription</b> logins; OpenRouter uses your API key (pay-per-token).
           Use <b>Test</b> to check a seat before you play.</p>
         <div class="row-end">
           <button class="btn primary big" id="start-game">Deal me in</button>
@@ -148,13 +148,17 @@
         <label>Default Claude model <input id="set-claude-model" list="claude-models" placeholder="sonnet"></label>
         <label>Codex path <input id="set-codex-path" placeholder="codex"></label>
         <label>Default Codex model <input id="set-codex-model" placeholder="(your Codex default)"></label>
+        <label>Grok path <input id="set-grok-path" placeholder="grok"></label>
+        <label>Default Grok model <input id="set-grok-model" placeholder="(your Grok default)"></label>
         <label class="check"><input type="checkbox" id="set-claude-sub"> Force Claude subscription (ignore ANTHROPIC_API_KEY)</label>
         <label class="check"><input type="checkbox" id="set-codex-sub"> Force ChatGPT subscription (ignore OPENAI_API_KEY)</label>
+        <label class="check"><input type="checkbox" id="set-grok-sub"> Force Grok login (ignore XAI_API_KEY)</label>
       </fieldset>
       <fieldset>
         <legend>Parallel sessions</legend>
         <label>Max Claude Code processes at once <input type="number" id="set-par-claude" min="1" max="12"></label>
         <label>Max Codex processes at once <input type="number" id="set-par-codex" min="1" max="12"></label>
+        <label>Max Grok processes at once <input type="number" id="set-par-grok" min="1" max="12"></label>
         <label>Max OpenRouter requests at once <input type="number" id="set-par-or" min="1" max="20"></label>
         <label class="check"><input type="checkbox" id="set-par-bj"> Blackjack: AI seats play their hands simultaneously</label>
       </fieldset>

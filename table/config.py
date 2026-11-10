@@ -11,14 +11,19 @@ DEFAULTS = {
     "openrouter_default_model": "openai/gpt-4o-mini",
     "claude_path": "",
     "codex_path": "",
+    "grok_path": "",
     "claude_default_model": "sonnet",
     "codex_default_model": "",
+    "grok_default_model": "",
     "claude_force_subscription": True,   # strip ANTHROPIC_API_KEY from the CLI's env
     "codex_force_subscription": True,    # strip OPENAI_API_KEY from the CLI's env
+    "grok_force_subscription": True,     # strip XAI_API_KEY from the CLI's env
     "claude_structured_output": True,
     "codex_structured_output": True,
+    "grok_structured_output": True,
     "max_parallel_claude": 4,
     "max_parallel_codex": 4,
+    "max_parallel_grok": 4,
     "max_parallel_openrouter": 6,
     "agent_timeout": 150,
     "ai_pace_seconds": 1.0,               # pause after each AI action so you can follow along

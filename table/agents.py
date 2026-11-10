@@ -1,7 +1,7 @@
-"""AI backends: Claude Code CLI, Codex CLI, OpenRouter HTTP API, and a local bot.
+"""AI backends: Claude Code CLI, Codex CLI, Grok Build CLI, OpenRouter HTTP API, and a local bot.
 
 Every AI seat gets its own subprocess / HTTP request per decision, so any number
-of Claude Code or Codex seats can be at the table (and think) at the same time.
+of Claude Code, Codex or Grok seats can be at the table (and think) at the same time.
 Per-provider semaphores cap how many run concurrently, which protects your
 subscription rate limits and your laptop's RAM.
 """
@@ -21,6 +21,7 @@ from . import config
 BACKENDS = {
     "claude": "Claude Code",
     "codex": "Codex",
+    "grok": "Grok",
     "openrouter": "OpenRouter",
     "bot": "Local bot",
 }
@@ -188,6 +189,53 @@ def call_codex(seat, system, prompt, schema):
     return extract_json(text), {}
 
 
+def call_grok(seat, system, prompt, schema):
+    s = config.get()
+    exe = s.get("grok_path") or "grok"
+    with tempfile.TemporaryDirectory(prefix="aitable-grok-") as tmp:
+        prompt_file = os.path.join(tmp, "prompt.txt")
+        with open(prompt_file, "w") as f:
+            f.write(prompt)
+        cmd = [
+            exe,
+            "--prompt-file", prompt_file,
+            "--verbatim",
+            "--output-format", "json",
+            "--system-prompt-override", system,
+            # An empty --tools list leaves every tool on, so allow one harmless tool instead.
+            "--tools", "todo_write",
+            "--disallowed-tools", "search_tool,use_tool",
+            "--no-subagents",
+            "--disable-web-search",
+            "--max-turns", "3",
+            "--cwd", tmp,
+        ]
+        if seat.get("model"):
+            cmd += ["-m", seat["model"]]
+        if seat.get("effort"):
+            cmd += ["--effort", seat["effort"]]
+        if s.get("grok_structured_output", True) and schema:
+            cmd += ["--json-schema", json.dumps(schema)]
+        # Strip the API key so the CLI uses your grok.com login.
+        strip = ["XAI_API_KEY"] if s.get("grok_force_subscription", True) else []
+        proc = _run(cmd, "", tmp, s.get("agent_timeout", 150), _subprocess_env(strip))
+    out = proc.stdout.strip()
+    try:
+        data = json.loads(out) if out else None
+    except json.JSONDecodeError:
+        return extract_json(out), {}
+    if not isinstance(data, dict) or data.get("type") == "error":
+        err = (data or {}).get("message") or proc.stderr.strip()
+        low = err.lower()
+        if "login" in low or "sign in" in low or "auth" in low or "401" in err:
+            raise AgentError("Grok is not logged in: run `grok login` in a terminal")
+        raise AgentError(f"grok exited {proc.returncode}: {err[-300:]}")
+    meta = {"cost_usd": data.get("total_cost_usd")}
+    if isinstance(data.get("structuredOutput"), dict):
+        return data["structuredOutput"], meta
+    return extract_json(data.get("text", "")), meta
+
+
 def call_openrouter(seat, system, prompt, schema):
     s = config.get()
     key = config.openrouter_key()
@@ -228,7 +276,7 @@ def call_openrouter(seat, system, prompt, schema):
     return extract_json(content), {"cost_usd": (data.get("usage") or {}).get("cost")}
 
 
-CALLERS = {"claude": call_claude, "codex": call_codex, "openrouter": call_openrouter}
+CALLERS = {"claude": call_claude, "codex": call_codex, "grok": call_grok, "openrouter": call_openrouter}
 
 
 def ask(seat, system, prompt, schema):
@@ -252,7 +300,7 @@ def ask(seat, system, prompt, schema):
 def detect_clis():
     s = config.get()
     found = {}
-    for kind, default in (("claude", "claude"), ("codex", "codex")):
+    for kind, default in (("claude", "claude"), ("codex", "codex"), ("grok", "grok")):
         exe = s.get(f"{kind}_path") or default
         path = shutil.which(exe)
         version = None
@@ -308,14 +356,39 @@ def _codex_models():
         return []
 
 
+EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"]
+
+
+def _grok_models():
+    """Models this Grok login offers, read from the cache the CLI keeps; [] if unavailable."""
+    home = os.environ.get("GROK_HOME") or os.path.expanduser("~/.grok")
+    try:
+        with open(os.path.join(home, "models_cache.json")) as f:
+            models = json.load(f)["models"]
+        out = []
+        for slug, m in models.items():
+            info = m.get("info") or {}
+            if info.get("hidden"):
+                continue
+            efforts = [e["value"] for e in info.get("reasoning_efforts") or []] if info.get("supports_reasoning_effort") else []
+            efforts.sort(key=lambda e: EFFORT_ORDER.index(e) if e in EFFORT_ORDER else len(EFFORT_ORDER))
+            out.append({"id": info.get("id") or slug, "efforts": efforts})
+        return out
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return []
+
+
 def model_catalog():
     """What the lobby's model and effort dropdowns offer for each backend."""
     codex = _codex_models()
     # "Default model" can resolve to any of them, so offer only the levels they all accept.
     codex_efforts = [e for e in codex[0]["efforts"] if all(e in m["efforts"] for m in codex)] if codex else BASIC_EFFORTS
+    grok = _grok_models()
+    grok_efforts = [e for e in grok[0]["efforts"] if all(e in m["efforts"] for m in grok)] if grok else BASIC_EFFORTS
     return {
         "claude": {"models": [{"id": m} for m in CLAUDE_MODELS], "efforts": CLAUDE_EFFORTS},
         "codex": {"models": codex, "efforts": codex_efforts},
+        "grok": {"models": grok, "efforts": grok_efforts},
         "openrouter": {"models": [], "efforts": BASIC_EFFORTS},
     }
 
