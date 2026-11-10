@@ -24,7 +24,7 @@ def pick_option(options):
 class Player:
     def __init__(self, pid, spec, chips):
         self.id = pid
-        self.kind = spec.get("kind", "bot")           # human | claude | codex | openrouter | bot
+        self.kind = spec.get("kind", "bot")           # human | claude | codex | grok | openrouter | bot
         self.name = (spec.get("name") or "").strip()[:24] or f"Player {pid + 1}"
         self.model = (spec.get("model") or "").strip()
         self.effort = (spec.get("effort") or "").strip()
@@ -232,7 +232,7 @@ class BaseGame:
     def system_prompt(self, player, game_rules):
         return (
             f"You are \"{player.name}\", an AI player at a casual {self.game_name} table on someone's laptop. "
-            f"The other players are a human and other AI agents (Claude Code, Codex, other models). "
+            f"The other players are a human and other AI agents (Claude Code, Codex, Grok, other models). "
             f"{self.character_brief(player)}\n\n{game_rules}\n\n"
             "Respond with ONE JSON object only, matching the requested schema. "
             f"\"table_talk\" is optional banter everyone hears ({self.talk_rule}). "

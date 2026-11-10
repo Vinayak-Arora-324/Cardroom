@@ -126,6 +126,7 @@
 }
 .stats .badge.claude::before { background: var(--claude); }
 .stats .badge.codex::before { background: var(--codex); }
+.stats .badge.grok::before { background: var(--grok); }
 .stats .badge.openrouter::before { background: var(--openrouter); }
 .stats .badge.bot::before { background: var(--bot); }
 .stats .badge.human::before { background: var(--human); }

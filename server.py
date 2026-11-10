@@ -160,7 +160,7 @@ def main():
     url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '') else args.host}:{args.port}"
     print(f"AI Card Table running at {url}  (Ctrl+C to quit)")
     clis = agents.detect_clis()
-    for kind in ("claude", "codex"):
+    for kind in ("claude", "codex", "grok"):
         info = clis[kind]
         print(f"  {kind:<7} {'found: ' + info['version'] if info['path'] else 'not found on PATH'}")
     print(f"  openrouter key {'set' if clis['openrouter']['key_set'] else 'not set (add it in Settings)'}")

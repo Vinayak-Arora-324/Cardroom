@@ -65,6 +65,7 @@
   /* ---- who is sitting where (muted; shown as a small dot or thin rule, never a loud fill) ---- */
   --claude: #cf8a6b;
   --codex: #6fb7a1;
+  --grok: #8fa6c4;
   --openrouter: #9d8fd6;
   --bot: #8c8676;
   --human: #efe7d6;

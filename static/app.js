@@ -3,11 +3,12 @@
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const KINDS = { human: "You", claude: "Claude Code", codex: "Codex", openrouter: "OpenRouter", bot: "Local bot" };
-const BADGE = { human: "YOU", claude: "CLAUDE", codex: "CODEX", openrouter: "OPENROUTER", bot: "BOT" };
+const KINDS = { human: "You", claude: "Claude Code", codex: "Codex", grok: "Grok", openrouter: "OpenRouter", bot: "Local bot" };
+const BADGE = { human: "YOU", claude: "CLAUDE", codex: "CODEX", grok: "GROK", openrouter: "OPENROUTER", bot: "BOT" };
 const NAME_POOL = {
   claude: ["Claude", "Claudette", "Sonny", "Opie", "Haiku", "Fable"],
   codex: ["Codex", "Cody", "Dex", "Gippy", "Turbo", "Omni"],
+  grok: ["Grok", "Groucho", "Rocket", "Ziggy", "Nova", "Sparks"],
   openrouter: ["Router", "Gemma", "Llama", "Mistral", "Qwen", "Deepy"],
   bot: ["Bot", "Robo", "Chip", "Dealer Dan", "Basic Bill", "Tilt"],
 };
@@ -54,8 +55,8 @@ function defaultSeat(kind, i) {
   return {
     kind,
     name: kind === "human" ? "You" : pool[(sameKind + i) % pool.length] + (sameKind >= pool.length ? ` ${sameKind + 1}` : ""),
-    model: kind === "claude" ? settings.claude_default_model || "sonnet" : kind === "codex" ? settings.codex_default_model || "" : kind === "openrouter" ? settings.openrouter_default_model || "" : "",
-    effort: kind === "claude" || kind === "codex" ? "low" : "",
+    model: kind === "claude" ? settings.claude_default_model || "sonnet" : kind === "codex" ? settings.codex_default_model || "" : kind === "grok" ? settings.grok_default_model || "" : kind === "openrouter" ? settings.openrouter_default_model || "" : "",
+    effort: ["claude", "codex", "grok"].includes(kind) ? "low" : "",
     personality: kind === "human" || kind === "bot" ? "" : PERSONALITIES[i % PERSONALITIES.length],
     persona: "random",
   };
@@ -64,10 +65,10 @@ function defaultSeat(kind, i) {
 function preset(name) {
   const plans = {
     mixed: ["human", "claude", "claude", "claude", "codex", "codex"],
-    full: ["human", "claude", "claude", "codex", "codex", "openrouter", "bot"],
+    full: ["human", "claude", "claude", "codex", "grok", "openrouter", "bot"],
     claude: ["human", "claude", "claude", "claude", "claude"],
     bots: ["human", "bot", "bot", "bot", "bot", "bot"],
-    spectate: ["claude", "claude", "codex", "codex", "openrouter"],
+    spectate: ["claude", "claude", "codex", "grok", "openrouter"],
     // Bridge seats run South, West, North, East: seats 1 and 3 are partners.
     bridge_claude: ["human", "codex", "claude", "codex"],
     bridge_codex: ["human", "claude", "codex", "claude"],
@@ -93,7 +94,7 @@ function modelField(s) {
   if (s.kind === "openrouter") {
     return `<input data-k="model" value="${esc(s.model)}" placeholder="provider/model" list="or-models" title="Model">`;
   }
-  if (s.kind !== "claude" && s.kind !== "codex") return '<select data-k="model" disabled><option>—</option></select>';
+  if (!["claude", "codex", "grok"].includes(s.kind)) return '<select data-k="model" disabled><option>—</option></select>';
   const ids = (catalog[s.kind]?.models || []).map((m) => m.id);
   if (s.model && !ids.includes(s.model)) ids.push(s.model);
   const option = (id, label) => `<option value="${esc(id)}" ${id === s.model ? "selected" : ""}>${esc(label)}</option>`;
@@ -242,10 +243,11 @@ function syncOptionsVisibility() {
 }
 
 function renderBackendStatus() {
-  const c = clis.claude || {}, x = clis.codex || {}, o = clis.openrouter || {};
+  const c = clis.claude || {}, x = clis.codex || {}, g = clis.grok || {}, o = clis.openrouter || {};
   $("#backend-status").innerHTML = `
     <span class="pill ${c.path ? "ok" : "bad"}" title="${esc(c.path || "not on PATH")}">Claude Code ${c.path ? esc((c.version || "").split(" ")[0]) : "not found"}</span>
     <span class="pill ${x.path ? "ok" : "bad"}" title="${esc(x.path || "not on PATH")}">Codex ${x.path ? esc((x.version || "").replace("codex-cli ", "")) : "not found"}</span>
+    <span class="pill ${g.path ? "ok" : "bad"}" title="${esc(g.path || "not on PATH")}">Grok ${g.path ? esc((g.version || "").split(" ")[1] || "") : "not found"}</span>
     <span class="pill ${o.key_set ? "ok" : "bad"}">OpenRouter ${o.key_set ? "key set" : "no key"}</span>`;
 }
 
@@ -254,6 +256,7 @@ async function startGame() {
   const problems = [];
   if (seats.some((s) => s.kind === "claude") && !clis.claude?.path) problems.push("Claude Code CLI not found (install it or set its path in Settings)");
   if (seats.some((s) => s.kind === "codex") && !clis.codex?.path) problems.push("Codex CLI not found (npm i -g @openai/codex, or set its path in Settings)");
+  if (seats.some((s) => s.kind === "grok") && !clis.grok?.path) problems.push("Grok CLI not found (install Grok Build, or set its path in Settings)");
   if (seats.some((s) => s.kind === "openrouter") && !clis.openrouter?.key_set) problems.push("No OpenRouter API key (add it in Settings)");
   if (problems.length && !confirm(problems.join("\n") + "\n\nThose seats will fall back to the local bot. Start anyway?")) return;
   try {
@@ -285,10 +288,14 @@ function openSettings() {
   $("#set-claude-model").value = s.claude_default_model || "";
   $("#set-codex-path").value = s.codex_path || "";
   $("#set-codex-model").value = s.codex_default_model || "";
+  $("#set-grok-path").value = s.grok_path || "";
+  $("#set-grok-model").value = s.grok_default_model || "";
   $("#set-claude-sub").checked = !!s.claude_force_subscription;
   $("#set-codex-sub").checked = !!s.codex_force_subscription;
+  $("#set-grok-sub").checked = !!s.grok_force_subscription;
   $("#set-par-claude").value = s.max_parallel_claude;
   $("#set-par-codex").value = s.max_parallel_codex;
+  $("#set-par-grok").value = s.max_parallel_grok;
   $("#set-par-or").value = s.max_parallel_openrouter;
   $("#set-par-bj").checked = !!s.parallel_blackjack;
   $("#set-timeout").value = s.agent_timeout;
@@ -305,10 +312,14 @@ async function saveSettings(extra = {}) {
     claude_default_model: $("#set-claude-model").value,
     codex_path: $("#set-codex-path").value,
     codex_default_model: $("#set-codex-model").value,
+    grok_path: $("#set-grok-path").value,
+    grok_default_model: $("#set-grok-model").value,
     claude_force_subscription: $("#set-claude-sub").checked,
     codex_force_subscription: $("#set-codex-sub").checked,
+    grok_force_subscription: $("#set-grok-sub").checked,
     max_parallel_claude: +$("#set-par-claude").value || 4,
     max_parallel_codex: +$("#set-par-codex").value || 4,
+    max_parallel_grok: +$("#set-par-grok").value || 4,
     max_parallel_openrouter: +$("#set-par-or").value || 6,
     parallel_blackjack: $("#set-par-bj").checked,
     agent_timeout: +$("#set-timeout").value || 150,
