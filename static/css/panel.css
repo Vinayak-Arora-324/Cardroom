@@ -281,3 +281,7 @@
 
 .bid-side { display: flex; flex-direction: column; gap: 4px; }
 .bid-side .btn { min-width: 96px; }
+
+/* Seconds left on your turn (the server's turn timer). */
+.action-panel .turn-clock { font: 600 14px/1 var(--sans); letter-spacing: .08em; color: var(--brass-hi);
+  min-width: 3ch; font-variant-numeric: tabular-nums; }

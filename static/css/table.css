@@ -113,3 +113,8 @@
 .trick-box .rel-3 { left: 80%; top: 50%; }
 .trick-box .slot.winning .card { outline: 1px solid var(--brass); outline-offset: 2px; }
 .result-line { font-family: var(--serif); font-style: italic; font-weight: 500; font-size: 20px; color: var(--ivory); }
+
+/* People get a tag rather than a dot: YOU on your own seat, HUMAN on everyone else's. */
+.seat .badge.tag { font-size: var(--fs-label); width: auto; height: auto; line-height: 1; padding: 2px 5px;
+  background: none; border: 1px solid var(--rule-strong); border-radius: var(--radius); color: var(--ivory);
+  letter-spacing: .12em; text-transform: uppercase; }

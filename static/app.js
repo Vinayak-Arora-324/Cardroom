@@ -3,8 +3,11 @@
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const KINDS = { human: "You", claude: "Claude Code", codex: "Codex", grok: "Grok", opencode: "OpenCode", bot: "Local bot" };
-const BADGE = { human: "YOU", claude: "CLAUDE", codex: "CODEX", grok: "GROK", opencode: "OPENCODE", bot: "BOT" };
+const KINDS = { human: "Human", claude: "Claude Code", codex: "Codex", grok: "Grok", opencode: "OpenCode", bot: "Local bot" };
+const BADGE = { human: "HUMAN", claude: "CLAUDE", codex: "CODEX", grok: "GROK", opencode: "OPENCODE", bot: "BOT" };
+const INVITE_ONLY = "Ask the host for an invite link.";
+const TOO_MANY_ATTEMPTS = "Too many attempts. Try again in a minute.";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NAME_POOL = {
   claude: ["Claude", "Claudette", "Sonny", "Opie", "Haiku", "Fable"],
   codex: ["Codex", "Cody", "Dex", "Gippy", "Turbo", "Omni"],
@@ -25,13 +28,93 @@ const PERSONALITIES = [
 const BRIDGE_COMPASS = ["South", "West", "North", "East"];
 const SUIT_GLYPH = { s: "♠", h: "♥", d: "♦", c: "♣" };
 
+// Invite tokens. A host link carries #host=TOKEN, a guest link #seat=TOKEN. Each is kept in
+// sessionStorage (this tab) and localStorage (later visits) and sent on every /api request.
+const TOKEN_KEYS = { host: "cardroom_host", seat: "cardroom_seat" };
+const tokens = { host: null, seat: null };
+
+function readToken(key) {
+  for (const store of [sessionStorage, localStorage]) {
+    try { const v = store.getItem(key); if (v) return v; } catch (_) { /* storage blocked */ }
+  }
+  return null;
+}
+
+function captureTokens() {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  // A fresh link decides the role: opening a guest link forgets a stored host token and vice versa,
+  // so one browser never sends both (which would put the host in a guest's seat).
+  const fresh = Object.keys(TOKEN_KEYS).filter((name) => hash.get(name));
+  if (fresh.length === 1) {
+    const other = TOKEN_KEYS[fresh[0] === "host" ? "seat" : "host"];
+    for (const store of [sessionStorage, localStorage]) {
+      try { store.removeItem(other); } catch (_) { /* storage blocked */ }
+    }
+  }
+  for (const [name, key] of Object.entries(TOKEN_KEYS)) {
+    const fresh = hash.get(name);
+    if (fresh) {
+      for (const store of [sessionStorage, localStorage]) {
+        try { store.setItem(key, fresh); } catch (_) { /* storage blocked */ }
+      }
+      tokens[name] = fresh;
+    } else {
+      tokens[name] = readToken(key);
+    }
+  }
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+}
+
+// A seat link works on one device only. This random id, kept in localStorage, tells the server which
+// device claimed a seat. Kept in memory too, so a blocked storage still gives one id per page load.
+const DEVICE_KEY = "cardroom_device";
+let device = null;
+
+function newDeviceId() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);  // not crypto.subtle: that is missing over plain http on a LAN address
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function deviceId() {
+  if (device) return device;
+  // Same stores as the tokens, so a reload in this tab keeps the seat even when localStorage is blocked.
+  const stores = [];
+  try { stores.push(localStorage); } catch (_) { /* storage blocked */ }
+  try { stores.push(sessionStorage); } catch (_) { /* storage blocked */ }
+  for (const store of stores) {
+    try { const v = store.getItem(DEVICE_KEY); if (/^[0-9a-f]{32}$/.test(v || "")) { device = v; break; } } catch (_) { /* storage blocked */ }
+  }
+  if (!device) device = newDeviceId();
+  for (const store of stores) {
+    try { store.setItem(DEVICE_KEY, device); } catch (_) { /* storage blocked */ }
+  }
+  return device;
+}
+
+function authHeaders() {
+  const h = { "X-Cardroom-Device": deviceId() };
+  if (tokens.host) h["X-Cardroom-Host"] = tokens.host;
+  if (tokens.seat) h["X-Cardroom-Seat"] = tokens.seat;
+  return h;
+}
+
+// Errors carry the HTTP status and the server's error code (e.g. seat_taken), so the caller can tell
+// a missing invite (401) from a seat held by another device (409) or a dropped connection.
+async function readJSON(r) {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { status: r.status, code: data.code });
+  return data;
+}
+
 const api = {
-  async get(path) { const r = await fetch(path); return r.json(); },
+  async get(path) { return readJSON(await fetch(path, { headers: authHeaders() })); },
   async post(path, body) {
-    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-    return data;
+    return readJSON(await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body || {}),
+    }));
   },
 };
 
@@ -41,20 +124,28 @@ let catalog = {};
 let personas = [];
 let seats = [];
 let state = null;
+let who = { host: false, seat: null, seat_name: null };  // from GET /api/whoami
 let polling = false;
 let lastRequestKey = "";
 let thinkingClock = {};
 let seatsBeforeBridge = null;
+let turnEdited = false;  // once the host types a turn timer, the count-based default stops overriding it
+let clockTimer = null;
 
 // ======================================================================
 // Lobby
 // ======================================================================
+// The first human seat is "You" (the host's). Other people's seats are "Guest <seat number>" until renamed.
+function humanName(i) {
+  return seats.some((x, j) => j !== i && x.kind === "human") ? `Guest ${i + 1}` : "You";
+}
+
 function defaultSeat(kind, i) {
   const pool = NAME_POOL[kind] || ["Player"];
   const sameKind = seats.filter((s) => s.kind === kind).length;
   return {
     kind,
-    name: kind === "human" ? "You" : pool[(sameKind + i) % pool.length] + (sameKind >= pool.length ? ` ${sameKind + 1}` : ""),
+    name: kind === "human" ? humanName(i) : pool[(sameKind + i) % pool.length] + (sameKind >= pool.length ? ` ${sameKind + 1}` : ""),
     model: kind === "claude" ? settings.claude_default_model || "sonnet" : kind === "codex" ? settings.codex_default_model || "" : kind === "grok" ? settings.grok_default_model || "" : kind === "opencode" ? settings.opencode_default_model || "" : "",
     effort: ["claude", "codex", "grok"].includes(kind) ? "low" : "",
     personality: kind === "human" || kind === "bot" ? "" : PERSONALITIES[i % PERSONALITIES.length],
@@ -146,12 +237,7 @@ function renderSeats() {
       el.addEventListener("change", () => {
         const k = el.dataset.k;
         if (k === "kind") {
-          if (el.value === "human" && seats.some((x, j) => j !== i && x.kind === "human")) {
-            alert("Only one human seat.");
-            el.value = s.kind;
-            return;
-          }
-          seats[i] = { ...defaultSeat(el.value, i), name: el.value === "human" ? "You" : defaultSeat(el.value, i).name };
+          seats[i] = defaultSeat(el.value, i);
           renderSeats();
         } else if (k === "model" && el.value === CUSTOM_MODEL) {
           const id = (prompt("Model ID", s.model) || "").trim();
@@ -186,10 +272,21 @@ function renderSeats() {
     };
     box.appendChild(row);
   });
+  syncTurnDefault();
   saveLobby();
 }
 
 function selectedGame() { return document.querySelector('input[name="game"]:checked').value; }
+
+// The turn timer is on by default once more than one person is at the table.
+function syncTurnDefault() {
+  if (turnEdited) return;
+  $("#opt-turn").value = seats.filter((s) => s.kind === "human").length > 1 ? 60 : 0;
+}
+
+function turnSeconds() {
+  return Math.max(0, Math.round(+$("#opt-turn").value || 0));
+}
 
 function gameOptions() {
   if (selectedGame() === "bridge") {
@@ -262,9 +359,16 @@ async function startGame() {
   if (seats.some((s) => s.kind === "grok") && !clis.grok?.path) problems.push("Grok CLI not found (install Grok Build, or set its path in Settings)");
   if (seats.some((s) => s.kind === "opencode") && !clis.opencode?.path) problems.push("OpenCode CLI not found (install opencode, or set its path in Settings)");
   if (problems.length && !confirm(problems.join("\n") + "\n\nThose seats will fall back to the local bot. Start anyway?")) return;
+  // The first human seat is the host's own; the server gives it the host's view.
+  const hostSeat = seats.findIndex((s) => s.kind === "human");
+  const payload = seats.map((s, i) => (i === hostSeat ? { ...s, host: true } : s));
+  const guests = seats.some((s, i) => s.kind === "human" && i !== hostSeat);
   try {
-    await api.post("/api/game/start", { game: selectedGame(), seats, options: gameOptions() });
+    await api.post("/api/game/start", {
+      game: selectedGame(), seats: payload, options: { ...gameOptions(), turn_seconds: turnSeconds() },
+    });
     showTable();
+    if (guests) openInvites();
   } catch (e) {
     $("#start-error").textContent = e.message;
   }
@@ -458,10 +562,30 @@ function modelLabel(p) {
   return esc([p.model || (p.kind === "human" ? "" : "default model"), p.effort].filter(Boolean).join(" · "));
 }
 
-function seatPositions(n, humanIndex) {
-  // Human sits bottom-centre; everyone else spreads clockwise around the ellipse.
+// "Me" is the viewer's own seat (state.you), never "any human seat".
+const myIndex = (snap = state) => snap.players.findIndex((p) => p.id === snap.you);
+const nameOf = (pid) => state.players.find((p) => p.id === pid)?.name || "a player";
+
+// Whether a seat is on the clock: a human the table is waiting on, or an AI still thinking.
+const isTurn = (p) => (state.waiting_on || []).includes(p.id) || !!p.thinking || state.to_act === p.id;
+
+// Names of the other people the table is waiting on: humans first, then (optionally) AIs still thinking.
+function waitingFor(includeAIs) {
+  const humans = (state.waiting_on || []).filter((pid) => pid !== state.you).map(nameOf);
+  const ais = includeAIs ? state.players.filter((p) => p.thinking).map((p) => p.name) : [];
+  return [...humans, ...ais].map(esc);
+}
+
+// People get a tag: YOU on your own seat, HUMAN on everyone else's. AI seats keep their provider dot.
+function badgeHTML(p) {
+  if (p.kind !== "human") return `<span class="badge ${p.kind}">${BADGE[p.kind]}</span>`;
+  return `<span class="badge human tag">${p.id === state.you ? "YOU" : "HUMAN"}</span>`;
+}
+
+function seatPositions(n, myIdx) {
+  // My seat sits bottom-centre; everyone else spreads clockwise around the ellipse.
   const pos = [];
-  const start = humanIndex >= 0 ? humanIndex : 0;
+  const start = myIdx >= 0 ? myIdx : 0;
   for (let k = 0; k < n; k++) {
     const i = (start + k) % n;
     const angle = Math.PI / 2 + (2 * Math.PI * k) / n; // 90deg = bottom
@@ -524,22 +648,21 @@ const SEAT_HALF = 67;  // px: half the height of a seat holding one two-card han
 function renderSeatsLayer(isPoker) {
   const layer = $("#seats-layer");
   const players = state.players;
-  const humanIndex = players.findIndex((p) => p.kind === "human");
-  const pos = seatPositions(players.length, humanIndex);
+  const pos = seatPositions(players.length, myIndex());
   const winners = new Set((state.pots || []).flatMap((p) => p.winners));
   let html = "";
   let betChips = "";  // after all the seats, so a chip appearing never moves a seat in the DOM
   players.forEach((p, i) => {
     const seat = state.seats[p.id] || {};
     const { x, y } = pos[i];
+    const mine = p.id === state.you;
     const classes = ["seat", "pinned"];
+    if (isTurn(p)) classes.push("turn");
     if (isPoker) {
-      if (state.to_act === p.id) classes.push("turn");
       if (seat.folded) classes.push("folded");
       if (!seat.in_hand) classes.push("out");
       if (winners.has(p.id) && seat.won) classes.push("winner");
     } else {
-      if (p.thinking || (state.human_request && p.kind === "human")) classes.push("turn");
       if (!seat.in_round) classes.push("out");
       if (seat.hands?.some((h) => h.payout > 0)) classes.push("winner");
     }
@@ -554,14 +677,14 @@ function renderSeatsLayer(isPoker) {
     const stack = chipsHTML(p.chips, { spread: 10, cols: 3, cls: "stack" });
     let body = "";
     if (isPoker) {
-      const mucked = seat.folded && p.kind !== "human";
+      const mucked = seat.folded && !mine;
       const cards = seat.cards?.length && !mucked ? seat.cards.map(cardHTML).join("") : "";
       body = `<div class="cards">${cards}${stack}</div>
         <div class="meta"><span class="action">${esc(seat.last_action || "")}</span>
         <span class="hand-name">${esc(seat.hand_name || "")}${seat.won ? ` +${seat.won}` : ""}</span></div>`;
     } else {
       const hands = (seat.hands || []).map((h, hi) => `
-        <div class="bj-hand ${seat.active_hand === hi && (seat.hands.length > 1 || p.kind === "human") ? "active" : ""}">
+        <div class="bj-hand ${seat.active_hand === hi && (seat.hands.length > 1 || mine) ? "active" : ""}">
           <div class="cards">${h.cards.map(cardHTML).join("")}</div>
           <div class="info"><span>${esc(h.value)}</span><span class="bet">${chipIcon(h.bet)}${h.bet}${h.doubled ? " ×2" : ""}</span>
           ${h.result ? `<span class="res ${h.result}">${h.result}${h.payout ? ` ${h.payout > 0 ? "+" : ""}${h.payout}` : ""}</span>` : ""}</div>
@@ -573,7 +696,7 @@ function renderSeatsLayer(isPoker) {
     const edge = y < 50 ? `top:calc(${y}% - ${SEAT_HALF}px)` : `bottom:calc(${100 - y}% - ${SEAT_HALF}px)`;
     html += `
       <div class="${classes.join(" ")}" style="left:${x}%;${edge}" data-key="seat-${p.id}">
-        <div class="head"><span class="badge ${p.kind}">${BADGE[p.kind]}</span><span class="name">${esc(p.name)}</span>${tags}</div>
+        <div class="head">${badgeHTML(p)}<span class="name">${esc(p.name)}</span>${tags}</div>
         <div class="row-between"><span class="model">${modelLabel(p)}</span>${thinkingHTML(p)}<span class="chips">${p.chips}</span></div>
         ${body}
       </div>`;
@@ -629,13 +752,13 @@ function renderBridge() {
   $("#table-info").textContent = info.join(" · ");
   $("#status-line").textContent = state.status || "";
   $("#stop-game").disabled = state.finished;
-  const humanIndex = state.players.findIndex((p) => p.kind === "human");
-  renderBridgeCenter(humanIndex, vul);
-  renderBridgeSeats(humanIndex);
-  renderBridgePanel(humanIndex);
+  const myIdx = myIndex();
+  renderBridgeCenter(myIdx, vul);
+  renderBridgeSeats(myIdx);
+  renderBridgePanel(myIdx);
 }
 
-function renderBridgeCenter(humanIndex, vul) {
+function renderBridgeCenter(myIdx, vul) {
   const center = $("#center");
   const isVul = (pid) => vul === "Both" || vul === (pid % 2 === 0 ? "NS" : "EW");
   if (state.phase === "auction" || (!state.contract && state.auction.length)) {
@@ -657,7 +780,7 @@ function renderBridgeCenter(humanIndex, vul) {
     morph(center, '<div class="label">Shuffling…</div>');
     return;
   }
-  const base = humanIndex >= 0 ? humanIndex : 0;
+  const base = myIdx >= 0 ? myIdx : 0;
   const winnerPid = state.last_winner;
   const slots = state.trick.map((t) => `
     <div class="slot rel-${(t.pid - base + 4) % 4} ${t.pid === winnerPid ? "winning" : ""}">${cardHTML(t.card)}</div>`).join("");
@@ -669,20 +792,20 @@ function renderBridgeCenter(humanIndex, vul) {
     ${state.result ? `<div class="result-line">${esc(state.result)}</div>` : ""}`);
 }
 
-function renderBridgeSeats(humanIndex) {
-  const pos = seatPositions(4, humanIndex);
+function renderBridgeSeats(myIdx) {
+  const pos = seatPositions(4, myIdx);
   let html = "";
   state.players.forEach((p, i) => {
     const seat = state.seats[p.id];
     const { x, y } = pos[i];
     const classes = ["seat", "bridge"];
-    if (state.to_act === p.id) classes.push("turn");
+    if (isTurn(p)) classes.push("turn");
     const roles = (seat.is_declarer ? '<span class="role-tag">Declarer</span>' : "") + (seat.is_dummy ? '<span class="role-tag">Dummy</span>' : "");
     const dealer = state.dealer_id === p.id && state.phase === "auction" ? '<span class="dealer-btn" title="Dealer">D</span>' : "";
     const hand = seat.cards ? bridgeHandRows(seat.cards) : `<div class="hidden-count">${seat.count} cards</div>`;
     html += `
       <div class="${classes.join(" ")}" style="left:${x}%;top:${y}%" data-key="seat-${p.id}">
-        <div class="head"><span class="compass">${seat.compass}</span><span class="badge ${p.kind}">${BADGE[p.kind]}</span><span class="name">${esc(p.name)}</span>${dealer}${roles}</div>
+        <div class="head"><span class="compass">${seat.compass}</span>${badgeHTML(p)}<span class="name">${esc(p.name)}</span>${dealer}${roles}</div>
         <div class="row-between"><span class="model">${modelLabel(p)}</span>${thinkingHTML(p)}<span class="chips">${seat.team} ${p.chips}</span></div>
         ${hand}
       </div>`;
@@ -690,24 +813,23 @@ function renderBridgeSeats(humanIndex) {
   morph($("#seats-layer"), html);
 }
 
-function renderBridgePanel(humanIndex) {
+function renderBridgePanel(myIdx) {
   const panel = $("#action-panel");
   panel.classList.add("bridge");
-  panel.classList.toggle("auction", state.phase === "auction" && humanIndex >= 0);  // room for the bid grid
+  panel.classList.toggle("auction", state.phase === "auction" && myIdx >= 0);  // room for the bid grid
   const req = state.human_request;
-  const owner = req?.type === "bridge_play" ? req.hand_owner : humanIndex;
-  const cards = owner >= 0 ? state.seats[owner]?.cards || [] : [];
+  const owner = req?.type === "bridge_play" ? req.hand_owner : state.you;
+  const cards = owner != null ? state.seats[owner]?.cards || [] : [];
   const key = JSON.stringify([req, cards, state.finished]);
   if (key === lastRequestKey) return;
   lastRequestKey = key;
   if (state.finished) {
     panel.classList.remove("bridge");
-    panel.innerHTML = `<span class="prompt">${esc(state.status)}</span><button class="btn primary" id="again">Back to lobby</button>`;
-    $("#again").onclick = showLobby;
+    showFinished(panel);
     return;
   }
   const playable = req?.type === "bridge_play" ? new Set(req.legal) : null;
-  const label = !req ? (humanIndex >= 0 ? "Your hand" : "")
+  const label = !req ? (myIdx >= 0 ? "Your hand" : "")
     : req.type === "bridge_bid" ? "Your hand: make a call"
     : req.from_dummy ? "Play a card from DUMMY" : "Your turn: play a card";
   const handHTML = cards.length ? `<div class="bridge-hand"><div class="label">${label}</div>${cards.map((c) =>
@@ -729,9 +851,11 @@ function renderBridgePanel(humanIndex) {
       <button class="btn danger" data-call="XX" ${legal.has("XX") ? "" : "disabled"}>Redouble</button>
     </div></div>`;
   }
-  const waiting = !req && !cards.length ? '<span class="prompt">Watching the AIs play…</span>' : "";
+  const others = waitingFor(false);  // another human is deciding: say so, else the AIs are playing
+  const waiting = !req && !cards.length ? `<span class="prompt">${others.length ? `Waiting for ${others.join(", ")}…` : "Watching the AIs play…"}</span>` : "";
   const err = req?.error ? `<div class="err">${esc(req.error)}</div>` : "";
   panel.innerHTML = handHTML + bidHTML + waiting + err;
+  attachTurnClock(panel, req);
   panel.querySelectorAll("[data-card]").forEach((b) => { if (!b.disabled) b.onclick = () => act({ card: b.dataset.card }); });
   panel.querySelectorAll("[data-call]").forEach((b) => { if (!b.disabled) b.onclick = () => act({ call: b.dataset.call }); });
 }
@@ -787,8 +911,7 @@ function tableEvents(prev, cur) {
   const sameHand = prev.hand_no === cur.hand_no;
   const centre = pointOf(isPoker ? "#center .pot-pile" : "#center .dealer-area .label");
   const layer = $("#seats-layer").getBoundingClientRect();
-  const humanIndex = cur.players.findIndex((p) => p.kind === "human");
-  const pos = seatPositions(cur.players.length, humanIndex);
+  const pos = seatPositions(cur.players.length, myIndex(cur));
   const betPoint = (i) => {
     const at = betPos(pos[i]);
     return { x: layer.left + (layer.width * at.x) / 100, y: layer.top + (layer.height * at.y) / 100 };
@@ -827,7 +950,7 @@ function tableEvents(prev, cur) {
   cur.players.forEach((p, i) => {
     const was = prev.players[i];
     if (!was) return;
-    const mine = p.kind === "human";
+    const mine = p.id === cur.you;
     const delta = p.chips - was.chips;
     const seat = cur.seats[p.id] || {};
     const before = (sameHand && prev.seats[p.id]) || {};
@@ -883,6 +1006,33 @@ function showBetChips(amount) {
   morph($("#bet-chips"), chipsHTML(amount, { cols: 4 }));
 }
 
+// Seconds left on my turn, when the server runs a turn timer (req.deadline is epoch seconds).
+function attachTurnClock(panel, req) {
+  stopTurnClock();
+  if (!req?.deadline) return;
+  const clock = document.createElement("span");
+  clock.className = "turn-clock";
+  panel.prepend(clock);
+  const tick = () => { clock.textContent = `${Math.max(0, Math.ceil(req.deadline - Date.now() / 1000))}s`; };
+  tick();
+  clockTimer = setInterval(tick, 250);
+}
+
+function stopTurnClock() {
+  clearInterval(clockTimer);
+  clockTimer = null;
+}
+
+// The end of a game: the host can go back to the lobby; a guest waits for the next game.
+function showFinished(panel) {
+  stopTurnClock();
+  panel.innerHTML = `<span class="prompt">${esc(state.status)}</span>` + (who.host
+    ? '<button class="btn primary" id="again">Back to lobby</button>'
+    : '<span class="prompt">Waiting for the host to start another game…</span>');
+  const again = $("#again");
+  if (again) again.onclick = showLobby;
+}
+
 function renderActionPanel(isPoker) {
   const panel = $("#action-panel");
   panel.classList.remove("bridge", "auction");
@@ -891,13 +1041,13 @@ function renderActionPanel(isPoker) {
   if (key === lastRequestKey) return;
   lastRequestKey = key;
   if (state.finished) {
-    panel.innerHTML = `<span class="prompt">${esc(state.status)}</span><button class="btn primary" id="again">Back to lobby</button>`;
-    $("#again").onclick = showLobby;
+    showFinished(panel);
     return;
   }
   if (!req) {
-    const thinking = state.players.filter((p) => p.thinking).map((p) => esc(p.name));
-    panel.innerHTML = `<span class="prompt">${thinking.length ? `Waiting for ${thinking.join(", ")}…` : "Waiting…"}</span>`;
+    const waiting = waitingFor(true);
+    panel.innerHTML = `<span class="prompt">${waiting.length ? `Waiting for ${waiting.join(", ")}…` : "Waiting…"}</span>`;
+    stopTurnClock();
     return;
   }
   const err = req.error ? `<div class="err">${esc(req.error)}</div>` : "";
@@ -969,6 +1119,7 @@ function renderActionPanel(isPoker) {
       <button class="btn" data-a="watch">Watch the AIs play</button>`;
     panel.querySelectorAll("[data-a]").forEach((b) => (b.onclick = () => act({ action: b.dataset.a })));
   }
+  attachTurnClock(panel, req);
 }
 
 async function act(body) {
@@ -1009,19 +1160,132 @@ async function poll() {
   while (!$("#table-screen").classList.contains("hidden")) {
     try {
       const s = await api.get(`/api/state?v=${v}`);
-      if (!s.game) { showLobby(); break; }
+      if (!s.game) {
+        if (who.host) { showLobby(); break; }
+        // A guest waits at the empty table until the host starts a game.
+        v = -1;  // a new game starts its version count again
+        clearTable();
+        $("#status-line").textContent = "Waiting for the host to start a game…";
+        await sleep(1500);
+        continue;
+      }
       const prev = state;
       state = s;
       v = s.version;
       render();
       dealCards(dealt.splice(0), !!prev);
       tableEvents(prev, s);
-    } catch (_) {
+    } catch (e) {
+      const gateMessage = gateMessageFor(e);
+      if (gateMessage) { showGate(gateMessage); break; }
       $("#status-line").textContent = "Lost connection to the server — is server.py still running?";
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleep(1500);
     }
   }
   polling = false;
+}
+
+function clearTable() {
+  state = null;
+  lastRequestKey = "";
+  stopTurnClock();
+  ["#seats-layer", "#center", "#action-panel"].forEach((sel) => { $(sel).innerHTML = ""; });
+}
+
+// The gate message for an error that means "you can't sit here", or null for anything else (e.g. a dropped connection).
+function gateMessageFor(e) {
+  if (e.status === 401) return INVITE_ONLY;
+  if (e.code === "seat_taken") return e.message;
+  if (e.status === 429) return TOO_MANY_ATTEMPTS;
+  return null;
+}
+
+// The full-page message for someone without a valid invite. Nothing else loads behind it.
+function showGate(message) {
+  $("#lobby").classList.add("hidden");
+  $("#table-screen").classList.add("hidden");
+  $("#gate-message").textContent = message;
+  $("#gate").classList.remove("hidden");
+}
+
+// ======================================================================
+// Invites (host only): one link per guest seat, shown after a game starts and reopened from the table.
+// ======================================================================
+let inviteData = null;
+
+async function openInvites() {
+  const dialog = $("#invite-dialog");
+  try {
+    inviteData = await api.get("/api/invites");
+  } catch (e) {
+    $("#invite-list").innerHTML = `<p class="error">${esc(e.message)}</p>`;
+    if (!dialog.open) dialog.showModal();
+    return;
+  }
+  const bases = inviteData.base_urls?.length ? inviteData.base_urls : [location.origin];
+  $("#invite-base").innerHTML = bases.map((b) => `<option value="${esc(b)}">${esc(b)}</option>`).join("");
+  $("#invite-base-box").classList.toggle("hidden", bases.length < 2);
+  // Bound to 127.0.0.1, the links only work on this computer.
+  $("#invite-lan-hint").classList.toggle("hidden", !!inviteData.lan);
+  inviteError = "";
+  renderInviteRows();
+  if (!dialog.open) dialog.showModal();
+}
+
+let inviteError = "";
+
+function renderInviteRows() {
+  const base = ($("#invite-base").value || location.origin).replace(/\/$/, "");
+  const guests = (inviteData.invites || []).filter((i) => !i.host);
+  const list = $("#invite-list");
+  const error = inviteError ? `<p class="error">${esc(inviteError)}</p>` : "";
+  list.innerHTML = error + (guests.length ? guests.map((g) => `
+    <div class="invite-row">
+      <div class="invite-who">
+        <span class="invite-name">${esc(g.name)}</span>
+        <span class="invite-state${g.claimed ? " joined" : ""}">${g.claimed ? "Joined" : "Not opened yet"}</span>
+      </div>
+      <code class="invite-link">${esc(`${base}/#seat=${g.token}`)}</code>
+      <div class="invite-actions">
+        <button class="btn small copy-invite" type="button">Copy</button>
+        <button class="btn small reissue-invite" type="button" data-pid="${g.pid}"
+          title="Cancel this link and make a new one. Use it if the link was shared by mistake or your friend switched device.">New link</button>
+      </div>
+    </div>`).join("") : '<p class="hint">No guest seats in this game.</p>');
+  list.querySelectorAll(".copy-invite").forEach((b) => (b.onclick = () => copyInvite(b)));
+  list.querySelectorAll(".reissue-invite").forEach((b) => (b.onclick = () => reissueInvite(b)));
+}
+
+// Cancels a guest's link (the old one stops working) and shows the new one.
+async function reissueInvite(btn) {
+  btn.disabled = true;
+  try {
+    await api.post("/api/invites/reissue", { pid: Number(btn.dataset.pid) });
+    inviteData = await api.get("/api/invites");
+    inviteError = "";
+  } catch (e) {
+    inviteError = e.message;
+  }
+  renderInviteRows();
+}
+
+async function copyInvite(btn) {
+  const code = btn.closest(".invite-row").querySelector(".invite-link");
+  let copied = false;
+  try {
+    if (!navigator.clipboard) throw new Error("no clipboard API");  // plain http on the LAN has none
+    await navigator.clipboard.writeText(code.textContent);
+    copied = true;
+  } catch (_) {
+    // Select the link so the user can press Ctrl+C; try the older copy command too.
+    const range = document.createRange();
+    range.selectNodeContents(code);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    copied = document.execCommand("copy");
+  }
+  btn.textContent = copied ? "Copied" : "Selected";
+  setTimeout(() => (btn.textContent = "Copy"), 1500);
 }
 
 setInterval(() => {
@@ -1049,11 +1313,22 @@ function showLobby() {
 // Wire-up
 // ======================================================================
 async function init() {
-  await loadSettings();
-  fillOpencodeModels();
-  if (!loadLobby()) preset("mixed");
-  renderSeats();
-  syncOptionsVisibility();
+  captureTokens();
+  deviceId();
+  try {
+    who = await api.get("/api/whoami");
+  } catch (e) {
+    showGate(gateMessageFor(e) || `Can't reach the server (${e.message}).`);
+    return;
+  }
+  document.querySelectorAll(".host-only").forEach((el) => el.classList.toggle("hidden", !who.host));
+  if (who.host) {
+    await loadSettings();
+    fillOpencodeModels();
+    if (!loadLobby()) preset("mixed");
+    renderSeats();
+    syncOptionsVisibility();
+  }
   document.querySelectorAll('input[name="game"]').forEach((r) => r.addEventListener("change", syncOptionsVisibility));
   document.querySelectorAll("[data-preset]").forEach((b) => (b.onclick = () => preset(b.dataset.preset)));
   $("#seat-plus").onclick = () => { if (seats.length < 7) { seats.push(defaultSeat(seats.length % 2 ? "claude" : "codex", seats.length)); renderSeats(); } };
@@ -1083,6 +1358,12 @@ async function init() {
     $("#log").classList.toggle("hidden", t.dataset.tab !== "log");
     $("#stats").classList.toggle("hidden", t.dataset.tab !== "stats");
   }));
+  $("#open-invite").onclick = openInvites;
+  $("#invite-close").onclick = () => $("#invite-dialog").close();
+  $("#invite-base").onchange = renderInviteRows;
+  $("#opt-turn").oninput = () => { turnEdited = true; };
+  // A guest goes straight to the table and waits for the host's game.
+  if (!who.host) { showTable(); return; }
   // Resume a game already running on the server (e.g. after a page refresh).
   const s = await api.get("/api/state").catch(() => null);
   if (s && s.game && !s.finished) showTable();

@@ -363,6 +363,8 @@ class Bridge(BaseGame):
             return self.ask_human(
                 {"type": "bridge_bid", "legal": legal},
                 lambda d: normalize_call(d.get("call"), legal),
+                player=p,
+                auto=lambda: {"call": "Pass"},
             )
         hand = self.hands[pid]
         lengths = suit_lengths(hand)
@@ -427,9 +429,12 @@ class Bridge(BaseGame):
             return legal[0]
         p = self.players[ctrl]
         if p.is_human:
+            # The controller (declarer for dummy's cards) answers; the timer falls back to the local bot.
             return self.ask_human(
                 {"type": "bridge_play", "legal": legal, "hand_owner": pid, "from_dummy": pid != ctrl},
                 lambda d: normalize_card(d.get("card"), legal),
+                player=p,
+                auto=lambda: {"card": self.bot_card(pid, legal)},
             )
         return self.ai_decide(
             p, self.system_prompt(p, RULES), self.play_prompt(pid, ctrl, legal), self.card_schema(legal),
@@ -607,13 +612,15 @@ class Bridge(BaseGame):
         return lowest if low_first[0][1] == self.trick[0][1][1] else discard()
 
     # ------------------------------------------------------------------ snapshot
-    def game_state(self):
+    def game_state(self, viewer=None):
+        # Watch mode (no human seats at all) shows every hand.
         has_human = any(p.is_human for p in self.players)
         seats = {}
         c = self.contract
         for p in self.players:
             is_dummy = bool(c and c["dummy"] == p.id and self.dummy_visible)
-            visible = self.show_cards_of(p, is_dummy or not has_human)
+            # Dummy is face up for everyone once the opening lead is made, as at a real table.
+            visible = not has_human or self.show_cards_of(p, viewer, revealed=is_dummy)
             seats[p.id] = {
                 "compass": LETTER[p.id],
                 "compass_name": COMPASS[p.id],

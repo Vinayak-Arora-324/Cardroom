@@ -97,7 +97,7 @@ class Blackjack(BaseGame):
         self.hands = {p.id: [] for p in self.players}
         self.active = {p.id: None for p in self.players}  # index of hand being played
         self.in_round = {p.id: False for p in self.players}
-        self.watching = False
+        self.watching = set()  # pids of busted humans who chose to watch instead of rebuying
         self.history = []
         self.shuffle()
 
@@ -120,17 +120,7 @@ class Blackjack(BaseGame):
     # ------------------------------------------------------------------ main loop
     def run(self):
         while True:
-            human = next((p for p in self.players if p.is_human), None)
-            if human and human.chips < self.min_bet and not self.watching:
-                choice = self.ask_human(
-                    {"type": "busted", "message": "You don't have enough chips for the minimum bet.", "options": ["rebuy", "watch"]},
-                    pick_option(("rebuy", "watch")),
-                )
-                if choice == "rebuy":
-                    human.chips = int(self.options.get("starting_chips", 1000))
-                    self.add_log(f"{human.name} rebuys for {human.chips}.")
-                else:
-                    self.watching = True
+            self.offer_rebuys()
             players = [p for p in self.players if p.chips >= self.min_bet]
             if not players:
                 best = max(self.players, key=lambda p: p.chips)
@@ -140,6 +130,29 @@ class Blackjack(BaseGame):
             for remaining in range(int(self.round_pause), 0, -1):
                 self.set_status(f"Next round in {remaining}s…")
                 self.sleep(1)
+
+    def offer_rebuys(self):
+        """Busted humans who aren't watching are asked at once: rebuy or watch."""
+        busted = [h for h in self.humans if h.chips < self.min_bet and h.id not in self.watching]
+        if not busted:
+            return
+
+        def ask(h):
+            choice = self.ask_human(
+                {"type": "busted", "message": "You don't have enough chips for the minimum bet.", "options": ["rebuy", "watch"]},
+                pick_option(("rebuy", "watch")),
+                player=h,
+                auto=lambda: {"action": "watch"},
+            )
+            if choice == "rebuy":
+                with self.lock:
+                    h.chips = int(self.options.get("starting_chips", 1000))
+                self.add_log(f"{h.name} rebuys for {h.chips}.")
+            else:
+                with self.lock:
+                    self.watching.add(h.id)
+
+        self.join_parallel(self.run_parallel([(lambda h=h: ask(h)) for h in busted]))
 
     def play_round(self, players):
         self.hand_no += 1
@@ -152,15 +165,12 @@ class Blackjack(BaseGame):
             self.in_round[p.id] = p in players
         self.add_log(f"— Round #{self.hand_no} —", "hand")
 
-        # 1. Bets (everyone at once)
+        # 1. Bets (every seat at once, humans included)
         self.phase = "betting"
         self.set_status("Place your bets")
         bets = {}
-        handle = self.run_parallel([(lambda p=p: bets.__setitem__(p.id, self.get_bet(p))) for p in players if not p.is_human])
-        for p in players:
-            if p.is_human:
-                bets[p.id] = self.get_bet(p)
-        self.join_parallel(handle)
+        self.join_parallel(self.run_parallel([(lambda p=p: bets.__setitem__(p.id, self.get_bet(p))) for p in players]))
+        self.check_stopped()  # join_parallel only checks stop while a thread is still running
         for p in players:
             bet = bets[p.id]
             p.chips -= bet
@@ -191,16 +201,11 @@ class Blackjack(BaseGame):
                 h.done = True
                 self.add_log(f"{p.name} has Blackjack!", "win")
 
-        # 3. Players act (AI seats in parallel with you, unless disabled)
+        # 3. Players act (every seat in parallel, humans included, unless disabled)
         self.phase = "playing"
         self.set_status("Players are playing their hands")
-        ai = [p for p in players if not p.is_human]
-        humans = [p for p in players if p.is_human]
         if config.get().get("parallel_blackjack", True):
-            handle = self.run_parallel([(lambda p=p: self.play_seat(p)) for p in ai])
-            for p in humans:
-                self.play_seat(p)
-            self.join_parallel(handle)
+            self.join_parallel(self.run_parallel([(lambda p=p: self.play_seat(p)) for p in players]))
         else:
             for p in players:
                 self.play_seat(p)
@@ -241,12 +246,14 @@ class Blackjack(BaseGame):
             return self.ask_human(
                 {"type": "bj_bet", "min": self.min_bet, "max": min(self.max_bet, p.chips), "chips": p.chips},
                 lambda d: self.clamp_bet(p, d.get("amount"), strict=True),
+                player=p,
+                auto=lambda: {"amount": self.min_bet},
             )
         lines = [
             f"Round #{self.hand_no}. Betting phase.",
             f"Your stack: {p.chips}. Table limits: min {self.min_bet}, max {min(self.max_bet, p.chips)}.",
             f"Shoe: {len(self.shoe)} of {self.shoe_total} cards remain (reshuffle at {self.cut}).",
-            "Stacks: " + ", ".join(f"{q.name} {q.chips}" for q in self.players),
+            "Stacks: " + ", ".join(f"{self.spoken_name(q)} {q.chips}" for q in self.players),
         ]
         if self.history:
             lines.append("Recent rounds:\n" + "\n".join(f"  {h}" for h in self.history[-4:]))
@@ -333,7 +340,12 @@ class Blackjack(BaseGame):
                 if a not in legal:
                     raise ValueError(f"choose one of {', '.join(legal)}")
                 return a
-            return self.ask_human({"type": "bj_play", "legal": legal, "hand_index": i, "value": describe_hand(h.cards)}, validate)
+            return self.ask_human(
+                {"type": "bj_play", "legal": legal, "hand_index": i, "value": describe_hand(h.cards)},
+                validate,
+                player=p,
+                auto=lambda: {"action": "stand"},  # always legal; never takes a card by surprise
+            )
 
         def validate(r):
             a = str(r.get("action", "")).lower().strip()
@@ -355,7 +367,7 @@ class Blackjack(BaseGame):
         for q in self.players:
             if q is p or not self.hands[q.id]:
                 continue
-            others.append(f"{q.name}: " + " | ".join(pretty_list(hk.cards) for hk in self.hands[q.id]))
+            others.append(f"{self.spoken_name(q)}: " + " | ".join(pretty_list(hk.cards) for hk in self.hands[q.id]))
         if others:
             lines.append("Other players' visible cards: " + "; ".join(others))
         lines.append(f"Shoe: {len(self.shoe)} of {self.shoe_total} cards remain.")
@@ -399,13 +411,16 @@ class Blackjack(BaseGame):
                     p.chips += h.bet + h.payout
                 net += h.payout
             word = f"+{net}" if net > 0 else str(net)
-            summary.append(f"{p.name} {word}")
+            summary.append(f"{self.spoken_name(p)} {word}")
             self.add_log(f"{p.name}: {', '.join(h.result for h in self.hands[p.id])} ({word})", "win" if net > 0 else "info")
         self.history.append(f"Round #{self.hand_no}: dealer {describe_hand(self.dealer)}; " + ", ".join(summary))
         self.set_status(f"Dealer: {describe_hand(self.dealer)} · " + " · ".join(summary))
 
     # ------------------------------------------------------------------ snapshot
-    def game_state(self):
+    def game_state(self, viewer=None):
+        # Player hands are face up on the table and the dealer's hole card is governed by
+        # dealer_hidden, so no seat's cards are hidden from a viewer; show_cards_of() is
+        # only needed if a seat ever gets private cards.
         seats = {}
         for p in self.players:
             seats[p.id] = {

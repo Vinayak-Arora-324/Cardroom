@@ -126,7 +126,7 @@ class TableTalk(unittest.TestCase):
 
     def showdown_table(self):
         g = table("social", "rock", human=True)
-        g.ask_human = lambda request, validate: validate({"action": "check" if "check" in request["legal"] else "call"})
+        g.ask_human = lambda request, validate, **kw: validate({"action": "check" if "check" in request["legal"] else "call"})
         g.bot_action = lambda p, ctx: ("check", 0) if "check" in ctx["legal"] else ("call", 0)
         return g
 
@@ -163,7 +163,7 @@ class TableTalk(unittest.TestCase):
     def test_folded_hands_leave_no_record(self):
         g = self.showdown_table()
         g.bot_action = lambda p, ctx: ("fold", 0) if "fold" in ctx["legal"] else ("check", 0)
-        g.ask_human = lambda request, validate: validate({"action": "fold"})
+        g.ask_human = lambda request, validate, **kw: validate({"action": "fold"})
         real = g.get_action
 
         def talk_then_act(p, ctx):
@@ -178,7 +178,7 @@ class TableTalk(unittest.TestCase):
 class Hidden(unittest.TestCase):
     def test_browser_state_never_names_the_character(self):
         g = table("random", "maniac", "rock", human=True)
-        g.ask_human = lambda request, validate: validate({"action": "fold"})
+        g.ask_human = lambda request, validate, **kw: validate({"action": "fold"})
         g.play_hand()
         sent = json.dumps(g.snapshot())
         for c in personas.CHARACTERS.values():

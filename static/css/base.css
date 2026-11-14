@@ -96,3 +96,27 @@ fieldset label input:not([type=checkbox]) { flex: 1; max-width: 280px; }
 fieldset label.check { justify-content: flex-start; }
 fieldset small { display: block; line-height: 1.5; margin: 2px 0 8px; }
 fieldset .btn.small { margin-top: 6px; }
+
+/* ---- no valid invite: one full-page line ---- */
+.gate { margin: auto; text-align: center; padding: 24px 16px; }
+.gate h1 { font-size: 30px; margin-bottom: 14px; }
+.gate p { font: italic 500 19px/1.4 var(--serif); color: var(--parchment); margin: 0; }
+
+/* ---- invite links (host) ---- */
+.invite-base { margin-top: 14px; }
+.invite-base label { display: flex; align-items: center; gap: 12px; color: var(--parchment); }
+.invite-base select { flex: 1; max-width: 360px; }
+.invite-list { display: flex; flex-direction: column; margin-top: 16px; }
+.invite-row { display: grid; grid-template-columns: minmax(90px, 160px) minmax(0, 1fr) auto; align-items: center; gap: 14px;
+  padding: 10px 0; border-top: 1px solid var(--rule); }
+.invite-who { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.invite-name { font: 600 19px/1.2 var(--serif); color: var(--ivory); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invite-state { font-size: 11px; color: var(--dim); }
+.invite-state.joined { color: var(--brass); }
+.invite-actions { display: flex; gap: 6px; }
+.invite-link { font: 12px/1.4 ui-monospace, monospace; color: var(--parchment); background: var(--ink-3);
+  padding: 4px 6px; border-radius: var(--radius); word-break: break-all; }
+@media (max-width: 560px) {
+  .invite-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .invite-link { grid-column: 1 / -1; grid-row: 2; }
+}

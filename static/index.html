@@ -59,6 +59,9 @@
           <label>Pause between boards <span class="field"><input type="number" id="opt-bridge-pause" value="8" min="0" max="60"> <small>s</small></span></label>
           <small>A board is about 40&ndash;60 AI calls, far more than a poker hand. Bridge uses more of your plan.</small>
         </div>
+        <div class="options-grid" id="options-turn">
+          <label>Turn timer <span class="field"><input type="number" id="opt-turn" value="0" min="0" max="600"> <small>s</small> <small>(0 = off; on by default with more than one person)</small></span></label>
+        </div>
       </div>
 
       <div class="panel seats-panel">
@@ -100,13 +103,14 @@
   <!-- ======================= TABLE ======================= -->
   <section id="table-screen" class="screen hidden">
     <header class="topbar">
-      <button class="btn ghost" id="back-lobby">Lobby</button>
+      <button class="btn ghost host-only" id="back-lobby">Lobby</button>
       <h1 id="table-title">Texas Hold'em</h1>
       <div id="table-info" class="table-info"></div>
       <div id="status-line" class="status-line"></div>
+      <button class="btn ghost host-only" id="open-invite" title="Invite links for the guests">Invite</button>
       <button class="btn ghost" id="sound-toggle" title="Card and chip sounds">Sound on</button>
-      <button class="btn ghost" id="open-settings-2" title="Settings">Settings</button>
-      <button class="btn danger" id="stop-game">Stop</button>
+      <button class="btn ghost host-only" id="open-settings-2" title="Settings">Settings</button>
+      <button class="btn danger host-only" id="stop-game">Stop</button>
     </header>
     <div class="table-layout">
       <div class="felt-wrap">
@@ -130,6 +134,28 @@
     </div>
     <div id="action-panel" class="action-panel"></div>
   </section>
+
+  <!-- ======================= GATE (no valid invite) ======================= -->
+  <section id="gate" class="screen hidden">
+    <div class="gate">
+      <h1>AI Card Table</h1>
+      <p id="gate-message"></p>
+    </div>
+  </section>
+
+  <!-- ======================= INVITES ======================= -->
+  <dialog id="invite-dialog">
+    <h2>Invite players</h2>
+    <p class="hint">Send each guest their own link. The first device to open a link keeps that seat.</p>
+    <div id="invite-base-box" class="invite-base hidden">
+      <label>Address <select id="invite-base"></select></label>
+    </div>
+    <div id="invite-list" class="invite-list"></div>
+    <p class="hint hidden" id="invite-lan-hint">Restart with ./run.sh --lan so others on your network can join.</p>
+    <div class="row-end">
+      <button type="button" class="btn ghost" id="invite-close">Close</button>
+    </div>
+  </dialog>
 
   <!-- ======================= SETTINGS ======================= -->
   <dialog id="settings-dialog">

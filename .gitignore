@@ -3,3 +3,4 @@ settings.json.tmp
 __pycache__/
 *.pyc
 .claude/
+host_token

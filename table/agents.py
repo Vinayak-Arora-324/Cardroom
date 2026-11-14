@@ -187,6 +187,13 @@ def call_codex(seat, system, prompt, schema):
             exe, "exec",
             "--skip-git-repo-check",
             "--ephemeral",
+            # Table chat can carry prompts from guests, so the seat gets no tools at all. Read-only
+            # sandboxing alone still lets the shell read any file, so turn off the shell and exec tools,
+            # web search, and the user's config (which loads plugins and MCP servers) as well.
+            "--ignore-user-config",
+            "--disable", "shell_tool",
+            "--disable", "unified_exec",
+            "-c", 'web_search="disabled"',
             "--sandbox", "read-only",
             "--color", "never",
             "-C", tmp,

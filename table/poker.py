@@ -63,6 +63,7 @@ class Holdem(BaseGame):
         self.last_raiser = None    # id of the latest bettor or raiser this hand
         self.hand_talk = {}        # player id -> what they've said this hand
         self.talk_record = deque(maxlen=6)  # what people said, then what they showed
+        self.watching = set()      # human ids who are out of chips and chose to watch
         choices = {p.id: spec.get("persona") for p, spec in zip(self.players, player_specs) if not p.is_human}
         self.minds = {pid: personas.Mind(cid) for pid, cid in personas.deal(choices).items()}
 
@@ -109,19 +110,30 @@ class Holdem(BaseGame):
         self.add_log(text)
 
     # ------------------------------------------------------------------ main loop
+    def offer_rebuys(self):
+        """Ask every busted human (not already watching) at once; they answer in parallel."""
+        busted = [h for h in self.humans if h.chips == 0 and h.id not in self.watching]
+        if not busted:
+            return
+
+        def ask(human):
+            choice = self.ask_human(
+                {"type": "busted", "message": "You're out of chips!", "options": ["rebuy", "watch"]},
+                pick_option(("rebuy", "watch")),
+                player=human,
+                auto=lambda: {"action": "watch"},
+            )
+            if choice == "rebuy":
+                human.chips = int(self.options.get("starting_chips", 1000))
+                self.add_log(f"{human.name} rebuys for {human.chips}.", "info")
+            else:
+                self.watching.add(human.id)
+
+        self.join_parallel(self.run_parallel([lambda h=h: ask(h) for h in busted]))
+
     def run(self):
         while True:
-            human = next((p for p in self.players if p.is_human), None)
-            if human and human.chips == 0 and not getattr(self, "_human_watching", False):
-                choice = self.ask_human(
-                    {"type": "busted", "message": "You're out of chips!", "options": ["rebuy", "watch"]},
-                    pick_option(("rebuy", "watch")),
-                )
-                if choice == "rebuy":
-                    human.chips = int(self.options.get("starting_chips", 1000))
-                    self.add_log(f"{human.name} rebuys for {human.chips}.", "info")
-                else:
-                    self._human_watching = True
+            self.offer_rebuys()
             alive = [p for p in self.players if p.chips > 0]
             if len(alive) < 2:
                 winner = alive[0] if alive else None
@@ -299,7 +311,12 @@ class Holdem(BaseGame):
                 "min_to": ctx["min_to"], "max_to": ctx["max_to"], "label": ctx["label"],
                 "pot": self.pot_total(), "big_blind": self.blinds()[1], "current_bet": self.current_bet,
             }
-            return self.ask_human(req, lambda d: self.normalize(ctx, d.get("action"), d.get("amount"), strict=True))
+            return self.ask_human(
+                req,
+                lambda d: self.normalize(ctx, d.get("action"), d.get("amount"), strict=True),
+                player=p,
+                auto=lambda: {"action": "check" if "check" in ctx["legal"] else "fold"},
+            )
         system = self.system_prompt(p, RULES)
         prompt = self.build_prompt(p, ctx)
         return self.ai_decide(
@@ -591,21 +608,22 @@ class Holdem(BaseGame):
         self.set_status(" · ".join(summaries))
 
     # ------------------------------------------------------------------ snapshot
-    def game_state(self):
+    def game_state(self, viewer=None):
         seats = {}
         for p in self.players:
             h = self.hs[p.id]
-            visible = self.show_cards_of(p, h.revealed)
+            visible = self.show_cards_of(p, viewer, h.revealed)
             seats[p.id] = {
                 "in_hand": h.in_hand, "folded": h.folded, "all_in": h.all_in,
                 "bet": h.bet, "last_action": h.last_action,
                 "cards": list(h.hole) if visible else ["??"] * len(h.hole),
                 "hand_name": h.hand_name, "won": h.won,
             }
-        human = next((p for p in self.players if p.is_human), None)
+        # The viewer's own hand only; never another human's.
+        me = next((p for p in self.humans if p.id == viewer), None)
         human_hand = ""
-        if human and self.hs[human.id].hole and len(self.board) >= 3 and not self.hs[human.id].folded:
-            human_hand = describe(best_hand(self.hs[human.id].hole + self.board)[0])
+        if me and self.hs[me.id].hole and len(self.board) >= 3 and not self.hs[me.id].folded:
+            human_hand = describe(best_hand(self.hs[me.id].hole + self.board)[0])
         return {
             "board": list(self.board),
             "pot": self.pot_total(),

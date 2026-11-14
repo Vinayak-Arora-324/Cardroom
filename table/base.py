@@ -46,7 +46,7 @@ class Player:
             "id": self.id,
             "name": self.name,
             "kind": self.kind,
-            "backend": "You" if self.is_human else agents.BACKENDS.get(self.kind, self.kind),
+            "backend": "Human" if self.is_human else agents.BACKENDS.get(self.kind, self.kind),
             "model": self.model,
             "effort": self.effort,
             "chips": self.chips,
@@ -75,8 +75,9 @@ class BaseGame:
         self.log = deque(maxlen=300)
         self.chat = deque(maxlen=60)
         self.status = "Starting…"
-        self.human_request = None
-        self._human_q = queue.Queue()
+        # One pending request and one answer queue per human seat (keyed by player id).
+        self.human_requests = {}
+        self._human_qs = {p.id: queue.Queue() for p in self.players if p.is_human}
         self.stopped = False
         self.finished = False
         self.thread = None
@@ -90,7 +91,7 @@ class BaseGame:
 
     def wait_version(self, since, timeout=20):
         with self.cond:
-            if self.version <= since:
+            if self.version == since:  # a newer game restarts at 0: answer at once, don't wait
                 self.cond.wait(timeout)
             return self.version
 
@@ -143,7 +144,8 @@ class BaseGame:
 
     def stop(self):
         self.stopped = True
-        self._human_q.put(None)
+        for q in self._human_qs.values():
+            q.put(None)
         self.changed()
 
     def _run(self):
@@ -157,7 +159,8 @@ class BaseGame:
             self.add_log(f"Game crashed: {e!r}", "error")
             self.status = f"Error: {e}"
         self.finished = True
-        self.human_request = None
+        with self.lock:
+            self.human_requests.clear()
         self.changed()
 
     def run(self):
@@ -188,18 +191,55 @@ class BaseGame:
             while t.is_alive():
                 t.join(0.2)
                 self.check_stopped()
+        self.check_stopped()  # a worker may have swallowed GameStopped after the last check
         if errors:
             raise errors[0]
 
     # ---- human input ----------------------------------------------------------
-    def ask_human(self, request, validate):
-        """Block until the browser submits a valid answer. validate(data) -> normalized or raises ValueError."""
+    @property
+    def humans(self):
+        return [p for p in self.players if p.is_human]
+
+    @property
+    def human_request(self):
+        """The first pending human request (single-human tables and tests)."""
+        with self.lock:
+            return next(iter(self.human_requests.values()), None)
+
+    def turn_seconds(self):
+        """Per-turn time limit for human seats; 0 means wait forever."""
+        try:
+            return max(0, int(self.options.get("turn_seconds", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def ask_human(self, request, validate, player=None, auto=None):
+        """Block until `player` submits a valid answer; validate(data) -> normalized or raises ValueError.
+
+        `player` defaults to the only human seat. `auto()` returns the answer data (as the
+        browser would send it) used when the turn timer runs out; without it the seat waits forever.
+        """
+        if player is None:
+            player = self.humans[0]
+        q = self._human_qs[player.id]
+        while not q.empty():  # drop a late answer to an earlier, timed-out request
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                break
+        limit = self.turn_seconds() if auto else 0
+        deadline = time.time() + limit if limit else None
         while True:
             self.check_stopped()
             with self.lock:
-                self.human_request = request
+                self.human_requests[player.id] = {**request, "pid": player.id, "deadline": deadline}
             self.changed()
-            data = self._human_q.get()
+            try:
+                data = q.get(timeout=max(0.05, deadline - time.time()) if deadline else None)
+            except queue.Empty:
+                data = auto()
+                self.add_log(f"{player.name} ran out of time.", "warn")
+                deadline = None  # if the auto answer is somehow invalid, fall back to waiting
             self.check_stopped()
             if data is None:
                 continue
@@ -209,18 +249,22 @@ class BaseGame:
                 request = {**request, "error": str(e)}
                 continue
             with self.lock:
-                self.human_request = None
+                self.human_requests.pop(player.id, None)
             self.changed()
             return result
 
-    def submit_human(self, data):
-        if self.human_request is None:
-            raise ValueError("It's not your turn.")
-        self._human_q.put(data)
+    def submit_human(self, data, pid=None):
+        """Answer the pending request of seat `pid` (default: whichever single seat is waiting)."""
+        with self.lock:
+            if pid is None and len(self.human_requests) == 1:
+                pid = next(iter(self.human_requests))
+            if pid not in self.human_requests:
+                raise ValueError("It's not your turn.")
+        self._human_qs[pid].put(data)
 
-    def human_chat(self, text):
-        human = next((p for p in self.players if p.is_human), None)
-        if human:
+    def human_chat(self, text, pid=None):
+        human = self.players[pid] if pid is not None else next(iter(self.humans), None)
+        if human and human.is_human:
             self.say(human, text)
 
     # ---- AI decisions ---------------------------------------------------------
@@ -232,7 +276,7 @@ class BaseGame:
     def system_prompt(self, player, game_rules):
         return (
             f"You are \"{player.name}\", an AI player at a casual {self.game_name} table on someone's laptop. "
-            f"The other players are a human and other AI agents (Claude Code, Codex, Grok, other models). "
+            f"The other players are a mix of humans and AI agents (Claude Code, Codex, Grok, other models). "
             f"{self.character_brief(player)}\n\n{game_rules}\n\n"
             "Respond with ONE JSON object only, matching the requested schema. "
             f"\"table_talk\" is optional banter everyone hears ({self.talk_rule}). "
@@ -284,7 +328,11 @@ class BaseGame:
         return fallback()
 
     # ---- snapshot -------------------------------------------------------------
-    def snapshot(self):
+    def snapshot(self, viewer=None):
+        """State as seen by seat `viewer` (a player id), or by a spectator when None.
+
+        Never put another seat's hidden cards in here: every browser gets its own snapshot.
+        """
         with self.lock:
             return {
                 "game": self.game_name,
@@ -292,16 +340,21 @@ class BaseGame:
                 "status": self.status,
                 "hand_no": self.hand_no,
                 "finished": self.finished,
+                "you": viewer,
                 "players": [p.public() for p in self.players],
                 "log": list(self.log)[-80:],
                 "chat": list(self.chat)[-40:],
-                "human_request": self.human_request,
+                "human_request": self.human_requests.get(viewer),
+                "waiting_on": sorted(self.human_requests),
                 "options": self.options,
-                **self.game_state(),
+                **self.game_state(viewer),
             }
 
-    def game_state(self):
+    def game_state(self, viewer=None):
         return {}
 
-    def show_cards_of(self, player, revealed=False):
-        return player.is_human or revealed or config.get().get("reveal_ai_cards")
+    def show_cards_of(self, player, viewer, revealed=False):
+        """May `viewer` see `player`'s hidden cards? Their own, revealed ones, or AI cards in debug mode."""
+        if revealed or (viewer is not None and player.id == viewer):
+            return True
+        return not player.is_human and bool(config.get().get("reveal_ai_cards"))

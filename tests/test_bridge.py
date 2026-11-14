@@ -239,12 +239,13 @@ class Games(unittest.TestCase):
         g.hand_no = 1
         g.hands = {i: ["As"] for i in range(4)}
         g.contract = {"level": 1, "strain": "NT", "doubled": 0, "declarer": 1, "dummy": 3}
-        s = g.game_state()
+        s = g.game_state(0)
         self.assertEqual(s["seats"][0]["cards"], ["As"])
         for pid in (1, 2, 3):
             self.assertIsNone(s["seats"][pid]["cards"])
+        self.assertIsNone(g.game_state()["seats"][0]["cards"])  # a spectator never sees a human's hand
         g.dummy_visible = True
-        s = g.game_state()
+        s = g.game_state(0)
         self.assertEqual(s["seats"][3]["cards"], ["As"])
         self.assertIsNone(s["seats"][1]["cards"])
         self.assertIsNone(s["seats"][2]["cards"])
